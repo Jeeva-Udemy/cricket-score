@@ -22,6 +22,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -303,10 +304,17 @@ private fun LiveScoreTabContent(
         // Scoring Controls
         val resultMessage = state.matchCompleteMessage
         if (resultMessage != null) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Match Complete", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(resultMessage, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("🎉 Match Complete", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(resultMessage, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(onClick = { viewModel.undoLastBall() }) {
+                        Text("Undo Last Ball")
+                    }
                 }
             }
         } else if (!state.isCurrentInningsLive) {
@@ -633,12 +641,15 @@ private fun EditBowlerDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (existingBowlers.isNotEmpty()) {
-                    Text("Select existing bowler:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Select from previous bowlers:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(existingBowlers) { bName ->
                             FilterChip(
                                 selected = bowlerName == bName,
-                                onClick = { bowlerName = bName },
+                                onClick = {
+                                    bowlerName = bName
+                                    onConfirm(bName)
+                                },
                                 label = { Text(bName) }
                             )
                         }

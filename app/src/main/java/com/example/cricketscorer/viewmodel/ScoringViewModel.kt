@@ -34,7 +34,7 @@ data class BowlerStat(
 )
 
 data class OverSummary(
-    val overNumber: Int, // 1-indexed (Over 1)
+    val overNumber: Int,
     val bowlerName: String,
     val runsInOver: Int,
     val wicketsInOver: Int,
@@ -359,9 +359,16 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
         viewModelScope.launch {
             val match = repository.getMatch(matchId) ?: return@launch
             val allInningsInDb = repository.getInningsForMatch(matchId)
-            val liveInn = allInningsInDb.firstOrNull { it.inningsNumber == match.currentInningsNumber } ?: return@launch
+            val liveInn = allInningsInDb.firstOrNull { it.inningsNumber == match.currentInningsNumber }
+                ?: allInningsInDb.lastOrNull() ?: return@launch
             val inningsId = liveInn.inningsId
             val lastBall = repository.undoLastBall(inningsId) ?: return@launch
+
+            if (match.isCompleted || liveInn.isCompleted) {
+                val reopenedMatch = match.copy(isCompleted = false, resultSummary = null)
+                repository.updateMatch(reopenedMatch)
+                _uiState.value = _uiState.value.copy(match = reopenedMatch, matchCompleteMessage = null)
+            }
 
             val isLegalBall = lastBall.extraType != ExtraType.WIDE &&
                     lastBall.extraType != ExtraType.NO_BALL &&
@@ -388,7 +395,8 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 noBallRuns = if (lastBall.extraType == ExtraType.NO_BALL) (liveInn.noBallRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.noBallRuns,
                 byeRuns = if (lastBall.extraType == ExtraType.BYE) (liveInn.byeRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.byeRuns,
                 legByeRuns = if (lastBall.extraType == ExtraType.LEG_BYE) (liveInn.legByeRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.legByeRuns,
-                penaltyRuns = if (lastBall.extraType == ExtraType.PENALTY) (liveInn.penaltyRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.penaltyRuns
+                penaltyRuns = if (lastBall.extraType == ExtraType.PENALTY) (liveInn.penaltyRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.penaltyRuns,
+                isCompleted = false
             )
             repository.updateInnings(updated)
             refreshState(updated)
