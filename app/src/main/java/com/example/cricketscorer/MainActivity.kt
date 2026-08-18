@@ -58,6 +58,7 @@ fun CricketNavHost(factory: ViewModelFactory) {
             val setupViewModel: MatchSetupViewModel = viewModel(factory = factory)
             MatchSetupScreen(
                 viewModel = setupViewModel,
+                onNavigateBack = { navController.popBackStack() },
                 onMatchStarted = { matchId, inningsId ->
                     navController.navigate("scoring/$matchId/$inningsId")
                 }
@@ -77,7 +78,8 @@ fun CricketNavHost(factory: ViewModelFactory) {
             ScoringScreen(
                 viewModel = scoringViewModel,
                 matchId = matchId,
-                inningsId = inningsId
+                inningsId = inningsId,
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }

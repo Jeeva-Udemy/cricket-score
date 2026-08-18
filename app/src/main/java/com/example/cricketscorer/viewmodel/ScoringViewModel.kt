@@ -86,6 +86,17 @@ data class ScoringUiState(
             return selectedInningsBallEvents.filter { it.overNumber == inn.completedOvers }
         }
 
+    val existingBowlers: List<String>
+        get() {
+            val balls = selectedInningsBallEvents
+            val fromBalls = balls.map { it.bowlerName }.filter { it.isNotBlank() }
+            val current = currentInnings?.currentBowlerName ?: ""
+            val set = mutableSetOf<String>()
+            if (current.isNotBlank()) set.add(current)
+            set.addAll(fromBalls)
+            return set.toList()
+        }
+
     val overSummaries: List<OverSummary>
         get() {
             val balls = selectedInningsBallEvents
@@ -124,7 +135,6 @@ data class ScoringUiState(
             val balls = selectedInningsBallEvents
             val names = mutableSetOf<String>()
 
-            // Gather all batsman names seen
             if (inn.strikerName.isNotBlank()) names.add(inn.strikerName)
             if (inn.nonStrikerName.isNotBlank()) names.add(inn.nonStrikerName)
             balls.forEach { if (it.strikerName.isNotBlank()) names.add(it.strikerName) }
@@ -190,7 +200,6 @@ data class ScoringUiState(
                 val wickets = bBalls.count { it.isWicket }
                 val econ = if (legalBalls > 0) runsConceded.toDouble() / (legalBalls / 6.0) else 0.0
 
-                // Maidens count
                 val maidens = bBalls.groupBy { it.overNumber }.count { (_, overB) ->
                     val overLegal = overB.count { it.extraType != ExtraType.WIDE && it.extraType != ExtraType.NO_BALL && it.extraType != ExtraType.PENALTY }
                     val overRuns = overB.sumOf { it.runsScored + it.extraRuns }
@@ -348,7 +357,9 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
 
     fun undoLastBall() {
         viewModelScope.launch {
-            val liveInn = uiState.value.liveInnings ?: return@launch
+            val match = repository.getMatch(matchId) ?: return@launch
+            val allInningsInDb = repository.getInningsForMatch(matchId)
+            val liveInn = allInningsInDb.firstOrNull { it.inningsNumber == match.currentInningsNumber } ?: return@launch
             val inningsId = liveInn.inningsId
             val lastBall = repository.undoLastBall(inningsId) ?: return@launch
 
@@ -394,7 +405,8 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     ) {
         viewModelScope.launch {
             val match = repository.getMatch(matchId) ?: return@launch
-            val innings = uiState.value.liveInnings ?: repository.getInningsForMatch(matchId).lastOrNull() ?: return@launch
+            val allInningsInDb = repository.getInningsForMatch(matchId)
+            val innings = allInningsInDb.firstOrNull { it.inningsNumber == match.currentInningsNumber } ?: return@launch
             if (innings.isCompleted || match.isCompleted) return@launch
 
             val inningsId = innings.inningsId
@@ -512,7 +524,7 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                     bowlingTeam = innings.battingTeam,
                     target = updatedInnings.totalRuns + 1
                 )
-                val secondInnId = repository.createInnings(secondInnings)
+                repository.createInnings(secondInnings)
                 val updatedMatch = match.copy(currentInningsNumber = 2)
                 repository.updateMatch(updatedMatch)
 
@@ -544,16 +556,22 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     }
 
     private fun buildResultText(firstInnings: InningsEntity, secondInnings: InningsEntity): String {
+        val reason = when {
+            secondInnings.target != null && secondInnings.totalRuns >= secondInnings.target -> "(Target Chased)"
+            secondInnings.wickets >= 10 -> "(All Out)"
+            else -> "(Overs Completed)"
+        }
+
         return when {
             secondInnings.totalRuns > firstInnings.totalRuns -> {
                 val wicketsInHand = 10 - secondInnings.wickets
-                "${secondInnings.battingTeam} won by $wicketsInHand wicket(s)"
+                "${secondInnings.battingTeam} won by $wicketsInHand wicket(s) $reason"
             }
             secondInnings.totalRuns < firstInnings.totalRuns -> {
                 val margin = firstInnings.totalRuns - secondInnings.totalRuns
-                "${firstInnings.battingTeam} won by $margin run(s)"
+                "${firstInnings.battingTeam} won by $margin run(s) $reason"
             }
-            else -> "Match tied"
+            else -> "Match tied $reason"
         }
     }
 }

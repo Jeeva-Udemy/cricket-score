@@ -1,6 +1,5 @@
 package com.example.cricketscorer.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,14 +16,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -34,6 +37,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -50,14 +54,15 @@ import androidx.compose.ui.unit.sp
 import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.WicketType
-import com.example.cricketscorer.viewmodel.OverSummary
 import com.example.cricketscorer.viewmodel.ScoringViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScoringScreen(
     viewModel: ScoringViewModel,
     matchId: Long,
-    inningsId: Long
+    inningsId: Long,
+    onNavigateBack: () -> Unit
 ) {
     LaunchedEffect(matchId, inningsId) {
         viewModel.loadMatch(matchId, inningsId)
@@ -77,13 +82,21 @@ fun ScoringScreen(
         return
     }
 
-    val match = state.match!!
     val innings = state.currentInnings!!
     val allInnings = state.allInnings
 
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
+        TopAppBar(
+            title = { Text("${innings.battingTeam} vs ${innings.bowlingTeam}") },
+            navigationIcon = {
+                IconButton(onClick = onNavigateBack) {
+                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            }
+        )
+
         // ---- Top Innings Tab Switcher ----
         TabRow(selectedTabIndex = state.selectedTabIndex) {
             val inn1 = allInnings.firstOrNull { it.inningsNumber == 1 }
@@ -173,6 +186,7 @@ fun ScoringScreen(
     if (showEditBowlerDialog) {
         EditBowlerDialog(
             currentBowler = innings.currentBowlerName,
+            existingBowlers = state.existingBowlers,
             onDismiss = { showEditBowlerDialog = false },
             onConfirm = { bName ->
                 viewModel.updateBowlerName(bName)
@@ -292,7 +306,7 @@ private fun LiveScoreTabContent(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Match Complete", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(resultMessage)
+                    Text(resultMessage, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 }
             }
         } else if (!state.isCurrentInningsLive) {
@@ -369,7 +383,6 @@ private fun ScorecardTabContent(state: com.example.cricketscorer.viewmodel.Scori
         Text("Batting — ${innings.battingTeam}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Table Header
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Batsman", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f))
                     Text("R", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
@@ -400,7 +413,6 @@ private fun ScorecardTabContent(state: com.example.cricketscorer.viewmodel.Scori
         Text("Bowling — ${innings.bowlingTeam}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Table Header
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Bowler", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f))
                     Text("O", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
@@ -453,7 +465,7 @@ private fun OversTabContent(state: com.example.cricketscorer.viewmodel.ScoringUi
                     }
                     Text("Bowler: ${summary.bowlerName}  •  ${summary.runsInOver} runs, ${summary.wicketsInOver} wkts", color = MaterialTheme.colorScheme.secondary)
                     Divider()
-                    summary.balls.forEachIndexed { idx, ball ->
+                    summary.balls.forEach { ball ->
                         val outcomeLabel = when {
                             ball.isWicket -> "Wicket (${ball.wicketType.name})"
                             ball.extraType == ExtraType.WIDE -> "Wide (+${ball.runsScored + ball.extraRuns} runs)"
@@ -605,9 +617,11 @@ private fun EditBatsmenDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditBowlerDialog(
     currentBowler: String,
+    existingBowlers: List<String>,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
@@ -615,15 +629,29 @@ private fun EditBowlerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Change Current Bowler") },
+        title = { Text("Select or Enter Bowler") },
         text = {
-            OutlinedTextField(
-                value = bowlerName,
-                onValueChange = { bowlerName = it },
-                label = { Text("Bowler Name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (existingBowlers.isNotEmpty()) {
+                    Text("Select existing bowler:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(existingBowlers) { bName ->
+                            FilterChip(
+                                selected = bowlerName == bName,
+                                onClick = { bowlerName = bName },
+                                label = { Text(bName) }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = bowlerName,
+                    onValueChange = { bowlerName = it },
+                    label = { Text("Or Type New Bowler Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(bowlerName) }) {
