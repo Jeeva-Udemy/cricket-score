@@ -21,6 +21,7 @@ class CricketRepository(private val dao: CricketDao) {
     fun observeInnings(inningsId: Long): Flow<InningsEntity?> = dao.observeInnings(inningsId)
     suspend fun getInnings(inningsId: Long): InningsEntity? = dao.getInnings(inningsId)
     suspend fun getInningsForMatch(matchId: Long): List<InningsEntity> = dao.getInningsForMatch(matchId)
+    fun observeInningsForMatch(matchId: Long): Flow<List<InningsEntity>> = dao.observeInningsForMatch(matchId)
 
     // Ball events
     suspend fun addBallEvent(ballEvent: BallEventEntity): Long = dao.insertBallEvent(ballEvent)

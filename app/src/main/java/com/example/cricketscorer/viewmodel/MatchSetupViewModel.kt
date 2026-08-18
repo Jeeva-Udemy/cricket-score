@@ -15,6 +15,8 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
 
     var teamAName by mutableStateOf("")
     var teamBName by mutableStateOf("")
+    var strikerName by mutableStateOf("Batsman 1")
+    var nonStrikerName by mutableStateOf("Batsman 2")
     var totalOvers by mutableStateOf("20")
     var tossWinnerTeam by mutableStateOf<String?>(null)
     var tossDecision by mutableStateOf(TossDecision.BAT)
@@ -60,9 +62,6 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
             )
             val matchId = repository.createMatch(match)
 
-            // Whoever is batting first opens the first innings, regardless of
-            // whether that came from winning the toss and choosing to bat, or
-            // losing the toss and being asked to bat.
             val battingFirst: String
             val bowlingFirst: String
             if (tossDecision == TossDecision.BAT) {
@@ -77,7 +76,9 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
                 matchId = matchId,
                 inningsNumber = 1,
                 battingTeam = battingFirst,
-                bowlingTeam = bowlingFirst
+                bowlingTeam = bowlingFirst,
+                strikerName = strikerName.ifBlank { "Batsman 1" },
+                nonStrikerName = nonStrikerName.ifBlank { "Batsman 2" }
             )
             val inningsId = repository.createInnings(firstInnings)
 

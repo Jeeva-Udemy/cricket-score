@@ -37,8 +37,11 @@ data class InningsEntity(
     val noBallRuns: Int = 0,
     val byeRuns: Int = 0,
     val legByeRuns: Int = 0,
+    val penaltyRuns: Int = 0,
     val strikerBatsmanNumber: Int = 1,
     val nonStrikerBatsmanNumber: Int = 2,
+    val strikerName: String = "Batsman 1",
+    val nonStrikerName: String = "Batsman 2",
     val nextBatsmanNumber: Int = 3,
     val target: Int? = null,
     val isCompleted: Boolean = false

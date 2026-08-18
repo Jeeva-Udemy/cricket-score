@@ -43,6 +43,9 @@ interface CricketDao {
     @Query("SELECT * FROM innings WHERE matchId = :matchId ORDER BY inningsNumber ASC")
     suspend fun getInningsForMatch(matchId: Long): List<InningsEntity>
 
+    @Query("SELECT * FROM innings WHERE matchId = :matchId ORDER BY inningsNumber ASC")
+    fun observeInningsForMatch(matchId: Long): Flow<List<InningsEntity>>
+
     // ---------- Ball events ----------
 
     @Insert

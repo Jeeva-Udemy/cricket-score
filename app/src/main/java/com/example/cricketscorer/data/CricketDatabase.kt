@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 
 @Database(
     entities = [MatchEntity::class, InningsEntity::class, BallEventEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -25,7 +25,7 @@ abstract class CricketDatabase : RoomDatabase() {
                     context.applicationContext,
                     CricketDatabase::class.java,
                     "cricket_scorer_db"
-                ).build().also { INSTANCE = it }
+                ).fallbackToDestructiveMigration().build().also { INSTANCE = it }
             }
         }
     }

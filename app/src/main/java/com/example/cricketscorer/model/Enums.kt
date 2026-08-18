@@ -19,7 +19,8 @@ enum class ExtraType {
     WIDE,
     NO_BALL,
     BYE,
-    LEG_BYE
+    LEG_BYE,
+    PENALTY
 }
 
 /**

@@ -66,6 +66,24 @@ fun MatchSetupScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
+        Text("Opening Batsmen Names", style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = viewModel.strikerName,
+                onValueChange = { viewModel.strikerName = it },
+                label = { Text("Striker Name") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = viewModel.nonStrikerName,
+                onValueChange = { viewModel.nonStrikerName = it },
+                label = { Text("Non-Striker Name") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
         Text("Toss Winner", style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val teamAValid = viewModel.teamAName.isNotBlank()
