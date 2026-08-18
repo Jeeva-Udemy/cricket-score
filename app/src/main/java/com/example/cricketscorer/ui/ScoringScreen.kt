@@ -1,15 +1,17 @@
 package com.example.cricketscorer.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
@@ -43,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.WicketType
@@ -64,6 +68,7 @@ fun ScoringScreen(
     var showExtraDialogFor by remember { mutableStateOf<ExtraType?>(null) }
     var showPenaltyDialog by remember { mutableStateOf(false) }
     var showEditBatsmenDialog by remember { mutableStateOf(false) }
+    var showEditBowlerDialog by remember { mutableStateOf(false) }
 
     if (state.isLoading || state.match == null || state.currentInnings == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -77,13 +82,9 @@ fun ScoringScreen(
     val allInnings = state.allInnings
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        modifier = Modifier.fillMaxSize()
     ) {
-        // ---- Innings Tabs (1st Innings vs 2nd Innings) ----
+        // ---- Top Innings Tab Switcher ----
         TabRow(selectedTabIndex = state.selectedTabIndex) {
             val inn1 = allInnings.firstOrNull { it.inningsNumber == 1 }
             val inn2 = allInnings.firstOrNull { it.inningsNumber == 2 }
@@ -100,7 +101,119 @@ fun ScoringScreen(
             )
         }
 
-        // ---- Score header ----
+        // ---- Sub Tab Bar: Live Score | Scorecard | Overs ----
+        TabRow(selectedTabIndex = state.selectedSubTab) {
+            Tab(
+                selected = state.selectedSubTab == 0,
+                onClick = { viewModel.selectSubTab(0) },
+                text = { Text("Live Score") }
+            )
+            Tab(
+                selected = state.selectedSubTab == 1,
+                onClick = { viewModel.selectSubTab(1) },
+                text = { Text("Scorecard") }
+            )
+            Tab(
+                selected = state.selectedSubTab == 2,
+                onClick = { viewModel.selectSubTab(2) },
+                text = { Text("Overs") }
+            )
+        }
+
+        // ---- Main Tab Content ----
+        when (state.selectedSubTab) {
+            0 -> LiveScoreTabContent(
+                viewModel = viewModel,
+                state = state,
+                onEditBatsmen = { showEditBatsmenDialog = true },
+                onEditBowler = { showEditBowlerDialog = true },
+                onWicketClick = { showWicketDialog = true },
+                onExtraClick = { showExtraDialogFor = it },
+                onPenaltyClick = { showPenaltyDialog = true }
+            )
+            1 -> ScorecardTabContent(state = state)
+            2 -> OversTabContent(state = state)
+        }
+    }
+
+    // ---- Dialogs ----
+    showExtraDialogFor?.let { extraType ->
+        ExtraRunsDialog(
+            extraType = extraType,
+            onDismiss = { showExtraDialogFor = null },
+            onConfirm = { runs ->
+                viewModel.recordExtra(extraType, runs)
+                showExtraDialogFor = null
+            }
+        )
+    }
+
+    if (showPenaltyDialog) {
+        PenaltyRunsDialog(
+            onDismiss = { showPenaltyDialog = false },
+            onConfirm = { penaltyRuns ->
+                viewModel.recordPenalty(penaltyRuns)
+                showPenaltyDialog = false
+            }
+        )
+    }
+
+    if (showEditBatsmenDialog) {
+        EditBatsmenDialog(
+            currentStriker = innings.strikerName,
+            currentNonStriker = innings.nonStrikerName,
+            onDismiss = { showEditBatsmenDialog = false },
+            onConfirm = { sName, nsName ->
+                viewModel.updateBatsmanNames(sName, nsName)
+                showEditBatsmenDialog = false
+            }
+        )
+    }
+
+    if (showEditBowlerDialog) {
+        EditBowlerDialog(
+            currentBowler = innings.currentBowlerName,
+            onDismiss = { showEditBowlerDialog = false },
+            onConfirm = { bName ->
+                viewModel.updateBowlerName(bName)
+                showEditBowlerDialog = false
+            }
+        )
+    }
+
+    if (showWicketDialog) {
+        WicketDialog(
+            nextBatsmanDefault = "Batsman ${innings.nextBatsmanNumber}",
+            onDismiss = { showWicketDialog = false },
+            onConfirm = { wicketType, runsCompleted, newBatsmanName ->
+                viewModel.recordWicket(wicketType, runsCompleted, newBatsmanName)
+                showWicketDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun LiveScoreTabContent(
+    viewModel: ScoringViewModel,
+    state: com.example.cricketscorer.viewmodel.ScoringUiState,
+    onEditBatsmen: () -> Unit,
+    onEditBowler: () -> Unit,
+    onWicketClick: () -> Unit,
+    onExtraClick: (ExtraType) -> Unit,
+    onPenaltyClick: () -> Unit
+) {
+    val match = state.match!!
+    val innings = state.currentInnings!!
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Score Header
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
@@ -122,9 +235,9 @@ fun ScoringScreen(
             }
         }
 
-        // ---- Batsmen at the crease ----
+        // Batsmen at crease
         Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -135,15 +248,37 @@ fun ScoringScreen(
                         Text("Non-striker: ${innings.nonStrikerName}")
                     }
                     if (state.isCurrentInningsLive) {
-                        OutlinedButton(onClick = { showEditBatsmenDialog = true }) {
-                            Text("Edit Names")
+                        OutlinedButton(
+                            onClick = onEditBatsmen,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text("Edit Names", fontSize = 12.sp)
                         }
                     }
                 }
             }
         }
 
-        // ---- This-over ball-by-ball ----
+        // Current Bowler
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Bowler: ${innings.currentBowlerName}", fontWeight = FontWeight.Bold)
+                if (state.isCurrentInningsLive) {
+                    OutlinedButton(
+                        onClick = onEditBowler,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text("Change Bowler", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        // This Over
         Text("This Over:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(state.currentOverBalls) { ball -> BallChip(ball) }
@@ -151,23 +286,7 @@ fun ScoringScreen(
 
         Divider()
 
-        // ---- Score per over breakdown ----
-        if (state.overSummaries.isNotEmpty()) {
-            Text("Score Per Over:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    state.overSummaries.forEach { summary ->
-                        OverSummaryRow(summary)
-                    }
-                }
-            }
-            Divider()
-        }
-
-        // ---- Scoring action controls ----
+        // Scoring Controls
         val resultMessage = state.matchCompleteMessage
         if (resultMessage != null) {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -193,27 +312,34 @@ fun ScoringScreen(
             }
 
             Text("Extras", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { showExtraDialogFor = ExtraType.WIDE }, modifier = Modifier.weight(1f)) {
-                    Text("Wide")
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                val extrasList = listOf(
+                    "WD" to ExtraType.WIDE,
+                    "NB" to ExtraType.NO_BALL,
+                    "BYE" to ExtraType.BYE,
+                    "LB" to ExtraType.LEG_BYE
+                )
+                extrasList.forEach { (label, type) ->
+                    OutlinedButton(
+                        onClick = { onExtraClick(type) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
+                    ) {
+                        Text(label, fontSize = 11.sp, maxLines = 1)
+                    }
                 }
-                OutlinedButton(onClick = { showExtraDialogFor = ExtraType.NO_BALL }, modifier = Modifier.weight(1f)) {
-                    Text("NB")
-                }
-                OutlinedButton(onClick = { showExtraDialogFor = ExtraType.BYE }, modifier = Modifier.weight(1f)) {
-                    Text("Bye")
-                }
-                OutlinedButton(onClick = { showExtraDialogFor = ExtraType.LEG_BYE }, modifier = Modifier.weight(1f)) {
-                    Text("LB")
-                }
-                OutlinedButton(onClick = { showPenaltyDialog = true }, modifier = Modifier.weight(1f)) {
-                    Text("PEN")
+                OutlinedButton(
+                    onClick = onPenaltyClick,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
+                ) {
+                    Text("PEN", fontSize = 11.sp, maxLines = 1)
                 }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(
-                    onClick = { showWicketDialog = true },
+                    onClick = onWicketClick,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier.weight(1f)
                 ) {
@@ -225,53 +351,131 @@ fun ScoringScreen(
             }
         }
     }
+}
 
-    // ---- Extra Runs Dialog (Scrollable) ----
-    showExtraDialogFor?.let { extraType ->
-        ExtraRunsDialog(
-            extraType = extraType,
-            onDismiss = { showExtraDialogFor = null },
-            onConfirm = { runs ->
-                viewModel.recordExtra(extraType, runs)
-                showExtraDialogFor = null
+@Composable
+private fun ScorecardTabContent(state: com.example.cricketscorer.viewmodel.ScoringUiState) {
+    val innings = state.currentInnings ?: return
+    val batsmanStats = state.batsmanStats
+    val bowlerStats = state.bowlerStats
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("Batting — ${innings.battingTeam}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Table Header
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Batsman", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f))
+                    Text("R", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("B", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("4s", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("6s", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("SR", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                }
+                Divider()
+                batsmanStats.forEach { b ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(modifier = Modifier.weight(2f)) {
+                            Text(b.name, fontWeight = FontWeight.SemiBold)
+                            Text(b.dismissalInfo, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("${b.runs}", modifier = Modifier.weight(0.7f))
+                        Text("${b.ballsFaced}", modifier = Modifier.weight(0.7f))
+                        Text("${b.fours}", modifier = Modifier.weight(0.7f))
+                        Text("${b.sixes}", modifier = Modifier.weight(0.7f))
+                        Text("%.1f".format(b.strikeRate), modifier = Modifier.weight(1f))
+                    }
+                }
             }
-        )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Text("Bowling — ${innings.bowlingTeam}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Table Header
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Bowler", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f))
+                    Text("O", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("M", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("R", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("W", fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                    Text("Econ", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                }
+                Divider()
+                bowlerStats.forEach { bw ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(bw.name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(2f))
+                        Text(bw.oversBowled, modifier = Modifier.weight(0.7f))
+                        Text("${bw.maidens}", modifier = Modifier.weight(0.7f))
+                        Text("${bw.runsConceded}", modifier = Modifier.weight(0.7f))
+                        Text("${bw.wickets}", modifier = Modifier.weight(0.7f))
+                        Text("%.1f".format(bw.economy), modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OversTabContent(state: com.example.cricketscorer.viewmodel.ScoringUiState) {
+    val overSummaries = state.overSummaries
+
+    if (overSummaries.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No overs completed yet in this innings.")
+        }
+        return
     }
 
-    // ---- Penalty Runs Dialog ----
-    if (showPenaltyDialog) {
-        PenaltyRunsDialog(
-            onDismiss = { showPenaltyDialog = false },
-            onConfirm = { penaltyRuns ->
-                viewModel.recordPenalty(penaltyRuns)
-                showPenaltyDialog = false
-            }
-        )
-    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(overSummaries) { summary ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Over ${summary.overNumber}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text("Total: ${summary.cumulativeRuns}/${summary.cumulativeWickets}", fontWeight = FontWeight.Bold)
+                    }
+                    Text("Bowler: ${summary.bowlerName}  •  ${summary.runsInOver} runs, ${summary.wicketsInOver} wkts", color = MaterialTheme.colorScheme.secondary)
+                    Divider()
+                    summary.balls.forEachIndexed { idx, ball ->
+                        val outcomeLabel = when {
+                            ball.isWicket -> "Wicket (${ball.wicketType.name})"
+                            ball.extraType == ExtraType.WIDE -> "Wide (+${ball.runsScored + ball.extraRuns} runs)"
+                            ball.extraType == ExtraType.NO_BALL -> "No Ball (+${ball.runsScored + ball.extraRuns} runs)"
+                            ball.extraType == ExtraType.BYE -> "Bye (${ball.runsScored} runs)"
+                            ball.extraType == ExtraType.LEG_BYE -> "Leg Bye (${ball.runsScored} runs)"
+                            ball.extraType == ExtraType.PENALTY -> "Penalty (+${ball.extraRuns} runs)"
+                            else -> "${ball.runsScored} run(s)"
+                        }
+                        val batsman = ball.strikerName.ifBlank { "Batsman ${ball.strikerBatsmanNumber}" }
 
-    // ---- Edit Batsmen Names Dialog ----
-    if (showEditBatsmenDialog) {
-        EditBatsmenDialog(
-            currentStriker = innings.strikerName,
-            currentNonStriker = innings.nonStrikerName,
-            onDismiss = { showEditBatsmenDialog = false },
-            onConfirm = { sName, nsName ->
-                viewModel.updateBatsmanNames(sName, nsName)
-                showEditBatsmenDialog = false
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Ball ${summary.overNumber - 1}.${ball.ballNumberInOver}: $batsman", fontSize = 13.sp)
+                            Text(outcomeLabel, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        }
+                    }
+                }
             }
-        )
-    }
-
-    // ---- Wicket Dialog (Prompt for new batsman) ----
-    if (showWicketDialog) {
-        WicketDialog(
-            nextBatsmanDefault = "Batsman ${innings.nextBatsmanNumber}",
-            onDismiss = { showWicketDialog = false },
-            onConfirm = { wicketType, runsCompleted, newBatsmanName ->
-                viewModel.recordWicket(wicketType, runsCompleted, newBatsmanName)
-                showWicketDialog = false
-            }
-        )
+        }
     }
 }
 
@@ -292,30 +496,6 @@ private fun BallChip(ball: BallEventEntity) {
         modifier = Modifier.padding(2.dp)
     ) {
         Text(label, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
-    }
-}
-
-@Composable
-private fun OverSummaryRow(summary: OverSummary) {
-    val ballLabels = summary.balls.joinToString(" ") { ball ->
-        when {
-            ball.isWicket -> "W"
-            ball.extraType == ExtraType.WIDE -> "Wd" + (if (ball.runsScored > 0) "+${ball.runsScored}" else "")
-            ball.extraType == ExtraType.NO_BALL -> "NB" + (if (ball.runsScored > 0) "+${ball.runsScored}" else "")
-            ball.extraType == ExtraType.BYE -> "B${ball.runsScored}"
-            ball.extraType == ExtraType.LEG_BYE -> "LB${ball.runsScored}"
-            ball.extraType == ExtraType.PENALTY -> "PEN+${ball.extraRuns}"
-            else -> ball.runsScored.toString()
-        }
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("Over ${summary.overNumber}:", fontWeight = FontWeight.Bold)
-        Text("$ballLabels  (${summary.runsInOver} runs)")
-        Text("${summary.cumulativeRuns}/${summary.cumulativeWickets}", fontWeight = FontWeight.Bold)
     }
 }
 
@@ -418,6 +598,35 @@ private fun EditBatsmenDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(strikerName, nonStrikerName) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun EditBowlerDialog(
+    currentBowler: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var bowlerName by remember { mutableStateOf(currentBowler) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Change Current Bowler") },
+        text = {
+            OutlinedTextField(
+                value = bowlerName,
+                onValueChange = { bowlerName = it },
+                label = { Text("Bowler Name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(bowlerName) }) {
                 Text("Save")
             }
         },

@@ -32,5 +32,7 @@ data class BallEventEntity(
     val wicketType: WicketType,
     val isWicket: Boolean,
     val strikerBatsmanNumber: Int,
+    val strikerName: String = "",
+    val bowlerName: String = "Bowler 1",
     val timestamp: Long = System.currentTimeMillis()
 )

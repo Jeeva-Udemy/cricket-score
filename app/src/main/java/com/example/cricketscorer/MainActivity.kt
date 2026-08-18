@@ -14,8 +14,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.cricketscorer.ui.HomeScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
 import com.example.cricketscorer.ui.ScoringScreen
+import com.example.cricketscorer.viewmodel.HomeViewModel
 import com.example.cricketscorer.viewmodel.MatchSetupViewModel
 import com.example.cricketscorer.viewmodel.ScoringViewModel
 import com.example.cricketscorer.viewmodel.ViewModelFactory
@@ -41,7 +43,16 @@ class MainActivity : ComponentActivity() {
 fun CricketNavHost(factory: ViewModelFactory) {
     val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = "setup") {
+    NavHost(navController = navController, startDestination = "home") {
+
+        composable("home") {
+            val homeViewModel: HomeViewModel = viewModel(factory = factory)
+            HomeScreen(
+                viewModel = homeViewModel,
+                onStartNewMatch = { navController.navigate("setup") },
+                onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") }
+            )
+        }
 
         composable("setup") {
             val setupViewModel: MatchSetupViewModel = viewModel(factory = factory)
@@ -62,8 +73,6 @@ fun CricketNavHost(factory: ViewModelFactory) {
         ) { backStackEntry ->
             val matchId = backStackEntry.arguments?.getLong("matchId") ?: -1L
             val inningsId = backStackEntry.arguments?.getLong("inningsId") ?: -1L
-            // Note: ScoringViewModel internally re-observes the 2nd innings once
-            // it's created, so the nav route does not need to change mid-match.
             val scoringViewModel: ScoringViewModel = viewModel(factory = factory)
             ScoringScreen(
                 viewModel = scoringViewModel,

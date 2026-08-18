@@ -9,6 +9,8 @@ class ViewModelFactory(private val repository: CricketRepository) : ViewModelPro
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return when {
+            modelClass.isAssignableFrom(HomeViewModel::class.java) ->
+                HomeViewModel(repository) as T
             modelClass.isAssignableFrom(MatchSetupViewModel::class.java) ->
                 MatchSetupViewModel(repository) as T
             modelClass.isAssignableFrom(ScoringViewModel::class.java) ->
