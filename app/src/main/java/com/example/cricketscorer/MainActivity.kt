@@ -60,7 +60,9 @@ fun CricketNavHost(factory: ViewModelFactory) {
                 viewModel = setupViewModel,
                 onNavigateBack = { navController.popBackStack() },
                 onMatchStarted = { matchId, inningsId ->
-                    navController.navigate("scoring/$matchId/$inningsId")
+                    navController.navigate("scoring/$matchId/$inningsId") {
+                        popUpTo("home")
+                    }
                 }
             )
         }
@@ -79,7 +81,11 @@ fun CricketNavHost(factory: ViewModelFactory) {
                 viewModel = scoringViewModel,
                 matchId = matchId,
                 inningsId = inningsId,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = {
+                    navController.navigate("home") {
+                        popUpTo("home") { inclusive = true }
+                    }
+                }
             )
         }
     }

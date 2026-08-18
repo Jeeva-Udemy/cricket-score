@@ -55,8 +55,9 @@ data class ScoringUiState(
     val currentInnings: InningsEntity?
         get() {
             if (allInnings.isEmpty()) return null
-            return allInnings.firstOrNull { it.inningsNumber == selectedTabIndex + 1 }
-                ?: allInnings.firstOrNull()
+            val targetNum = if (selectedTabIndex == 1) 2 else 1
+            return allInnings.firstOrNull { it.inningsNumber == targetNum }
+                ?: allInnings.lastOrNull()
         }
 
     val liveInnings: InningsEntity?
@@ -274,7 +275,6 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
 
                 launch {
                     repository.observeInningsForMatch(matchId).collect { inningsList ->
-                        val currentEventsMap = _uiState.value.allBallEvents.toMutableMap()
                         for (inn in inningsList) {
                             launch {
                                 repository.observeBallEvents(inn.inningsId).collect { events ->
@@ -285,7 +285,7 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                             }
                         }
 
-                        val activeTab = if (match.currentInningsNumber == 2 && _uiState.value.selectedTabIndex == 0 && inningsList.any { it.inningsNumber == 2 }) 1 else _uiState.value.selectedTabIndex
+                        val activeTab = if (match.currentInningsNumber == 2 && inningsList.any { it.inningsNumber == 2 }) 1 else _uiState.value.selectedTabIndex
                         val resultMsg = match.resultSummary ?: _uiState.value.matchCompleteMessage
 
                         _uiState.value = _uiState.value.copy(

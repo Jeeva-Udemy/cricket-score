@@ -86,6 +86,13 @@ fun ScoringScreen(
     val innings = state.currentInnings!!
     val allInnings = state.allInnings
 
+    // ---- Auto Bowler Selection Dialog Prompt After Every Over ----
+    LaunchedEffect(innings.completedOvers) {
+        if (innings.completedOvers > 0 && innings.ballsThisOver == 0 && state.isCurrentInningsLive) {
+            showEditBowlerDialog = true
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -559,16 +566,11 @@ private fun PenaltyRunsDialog(
         title = { Text("Add Penalty Runs") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Select or enter penalty runs to add to team score:")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(1, 2, 5, 10).forEach { r ->
-                        OutlinedButton(onClick = { onConfirm(r) }) { Text("+$r") }
-                    }
-                }
+                Text("Enter penalty runs to add to team score:")
                 OutlinedTextField(
                     value = customRuns,
                     onValueChange = { if (it.all { c -> c.isDigit() }) customRuns = it },
-                    label = { Text("Custom Penalty Runs") },
+                    label = { Text("Penalty Runs") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
