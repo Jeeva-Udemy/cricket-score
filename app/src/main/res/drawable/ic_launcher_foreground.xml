@@ -45,5 +45,6 @@
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1"
-        android:pathData="M60,54 Q69,63 78,72 M62,52 Q71,61 80,70" />
+        android:pathData="M60,54 L61.5,55.5 M63,57 L64.5,58.5 M66,60 L67.5,61.5 M69,63 L70.5,64.5 M72,66 L73.5,67.5 M75,69 L76.5,70.5
+                           M62,52 L63.5,53.5 M65,55 L66.5,56.5 M68,58 L69.5,59.5 M71,61 L72.5,62.5 M74,64 L75.5,65.5 M77,67 L78.5,68.5" />
 </vector>
