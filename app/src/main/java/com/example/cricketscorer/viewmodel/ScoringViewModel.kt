@@ -50,7 +50,9 @@ data class ScoringUiState(
     val selectedTabIndex: Int = 0, // 0 = 1st Innings, 1 = 2nd Innings
     val selectedSubTab: Int = 0,   // 0 = Live Score, 1 = Scorecard, 2 = Overs
     val isLoading: Boolean = true,
-    val matchCompleteMessage: String? = null
+    val matchCompleteMessage: String? = null,
+    // track whether we've already auto-switched to 2nd innings tab (so it only happens once)
+    val hasAutoSwitchedToSecondInnings: Boolean = false
 ) {
     val currentInnings: InningsEntity?
         get() {
@@ -202,7 +204,9 @@ data class ScoringUiState(
                 val econ = if (legalBalls > 0) runsConceded.toDouble() / (legalBalls / 6.0) else 0.0
 
                 val maidens = bBalls.groupBy { it.overNumber }.count { (_, overB) ->
-                    val overLegal = overB.count { it.extraType != ExtraType.WIDE && it.extraType != ExtraType.NO_BALL && it.extraType != ExtraType.PENALTY }
+                    val overLegal = overB.count {
+                        it.extraType != ExtraType.WIDE && it.extraType != ExtraType.NO_BALL && it.extraType != ExtraType.PENALTY
+                    }
                     val overRuns = overB.sumOf { it.runsScored + it.extraRuns }
                     overLegal >= 6 && overRuns == 0
                 }
@@ -258,24 +262,28 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
 
     private var matchId: Long = -1
     private var observeJob: Job? = null
+    // Track which innings IDs we're already observing to avoid duplicate observers
+    private val observedInningsIds = mutableSetOf<Long>()
 
     private val _uiState = MutableStateFlow(ScoringUiState())
     val uiState: StateFlow<ScoringUiState> = _uiState.asStateFlow()
 
     fun loadMatch(matchId: Long, initialInningsId: Long) {
         this.matchId = matchId
+        observedInningsIds.clear()
         observeMatchData()
     }
 
     private fun observeMatchData() {
         observeJob?.cancel()
         observeJob = viewModelScope.launch {
-            repository.observeMatch(matchId).collect { match ->
-                if (match == null) return@collect
-
-                launch {
-                    repository.observeInningsForMatch(matchId).collect { inningsList ->
-                        for (inn in inningsList) {
+            // Observe innings list changes
+            launch {
+                repository.observeInningsForMatch(matchId).collect { inningsList ->
+                    // Subscribe to ball events for any innings we haven't observed yet
+                    for (inn in inningsList) {
+                        if (inn.inningsId !in observedInningsIds) {
+                            observedInningsIds.add(inn.inningsId)
                             launch {
                                 repository.observeBallEvents(inn.inningsId).collect { events ->
                                     val map = _uiState.value.allBallEvents.toMutableMap()
@@ -284,18 +292,32 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                                 }
                             }
                         }
-
-                        val activeTab = if (match.currentInningsNumber == 2 && inningsList.any { it.inningsNumber == 2 }) 1 else _uiState.value.selectedTabIndex
-                        val resultMsg = match.resultSummary ?: _uiState.value.matchCompleteMessage
-
-                        _uiState.value = _uiState.value.copy(
-                            match = match,
-                            allInnings = inningsList,
-                            selectedTabIndex = activeTab,
-                            isLoading = false,
-                            matchCompleteMessage = resultMsg
-                        )
                     }
+
+                    // Auto-switch to 2nd innings tab only once when 2nd innings first appears
+                    val has2ndInnings = inningsList.any { it.inningsNumber == 2 }
+                    val shouldAutoSwitch = has2ndInnings && !_uiState.value.hasAutoSwitchedToSecondInnings
+                    val newTabIndex = if (shouldAutoSwitch) 1 else _uiState.value.selectedTabIndex
+
+                    _uiState.value = _uiState.value.copy(
+                        allInnings = inningsList,
+                        selectedTabIndex = newTabIndex,
+                        hasAutoSwitchedToSecondInnings = if (shouldAutoSwitch) true else _uiState.value.hasAutoSwitchedToSecondInnings,
+                        isLoading = false
+                    )
+                }
+            }
+
+            // Observe match changes separately
+            launch {
+                repository.observeMatch(matchId).collect { match ->
+                    if (match == null) return@collect
+                    val resultMsg = match.resultSummary ?: _uiState.value.matchCompleteMessage
+                    _uiState.value = _uiState.value.copy(
+                        match = match,
+                        matchCompleteMessage = resultMsg,
+                        isLoading = false
+                    )
                 }
             }
         }
@@ -311,24 +333,22 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
 
     fun updateBatsmanNames(strikerName: String, nonStrikerName: String) {
         viewModelScope.launch {
-            val liveInn = uiState.value.liveInnings ?: return@launch
+            val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
                 strikerName = strikerName.ifBlank { liveInn.strikerName },
                 nonStrikerName = nonStrikerName.ifBlank { liveInn.nonStrikerName }
             )
             repository.updateInnings(updated)
-            refreshState(updated)
         }
     }
 
     fun updateBowlerName(bowlerName: String) {
         viewModelScope.launch {
-            val liveInn = uiState.value.liveInnings ?: return@launch
+            val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
                 currentBowlerName = bowlerName.ifBlank { liveInn.currentBowlerName }
             )
             repository.updateInnings(updated)
-            refreshState(updated)
         }
     }
 
@@ -358,16 +378,15 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     fun undoLastBall() {
         viewModelScope.launch {
             val match = repository.getMatch(matchId) ?: return@launch
-            val allInningsInDb = repository.getInningsForMatch(matchId)
-            val liveInn = allInningsInDb.firstOrNull { it.inningsNumber == match.currentInningsNumber }
-                ?: allInningsInDb.lastOrNull() ?: return@launch
+            val liveInn = fetchLiveInnings() ?: return@launch
             val inningsId = liveInn.inningsId
             val lastBall = repository.undoLastBall(inningsId) ?: return@launch
 
             if (match.isCompleted || liveInn.isCompleted) {
+                val reopenedInnings = liveInn.copy(isCompleted = false)
+                repository.updateInnings(reopenedInnings)
                 val reopenedMatch = match.copy(isCompleted = false, resultSummary = null)
                 repository.updateMatch(reopenedMatch)
-                _uiState.value = _uiState.value.copy(match = reopenedMatch, matchCompleteMessage = null)
             }
 
             val isLegalBall = lastBall.extraType != ExtraType.WIDE &&
@@ -375,8 +394,11 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                     lastBall.extraType != ExtraType.PENALTY
             val totalRunsFromBall = lastBall.runsScored + lastBall.extraRuns
 
-            var newBallsThisOver = liveInn.ballsThisOver
-            var newCompletedOvers = liveInn.completedOvers
+            // Re-fetch innings after possible reopen so we have latest state
+            val freshInn = fetchLiveInnings() ?: return@launch
+
+            var newBallsThisOver = freshInn.ballsThisOver
+            var newCompletedOvers = freshInn.completedOvers
             if (isLegalBall) {
                 if (newBallsThisOver == 0) {
                     newCompletedOvers = (newCompletedOvers - 1).coerceAtLeast(0)
@@ -386,21 +408,28 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 }
             }
 
-            val updated = liveInn.copy(
-                totalRuns = (liveInn.totalRuns - totalRunsFromBall).coerceAtLeast(0),
-                wickets = if (lastBall.isWicket) (liveInn.wickets - 1).coerceAtLeast(0) else liveInn.wickets,
+            val updated = freshInn.copy(
+                totalRuns = (freshInn.totalRuns - totalRunsFromBall).coerceAtLeast(0),
+                wickets = if (lastBall.isWicket) (freshInn.wickets - 1).coerceAtLeast(0) else freshInn.wickets,
                 completedOvers = newCompletedOvers,
                 ballsThisOver = newBallsThisOver,
-                wideRuns = if (lastBall.extraType == ExtraType.WIDE) (liveInn.wideRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.wideRuns,
-                noBallRuns = if (lastBall.extraType == ExtraType.NO_BALL) (liveInn.noBallRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.noBallRuns,
-                byeRuns = if (lastBall.extraType == ExtraType.BYE) (liveInn.byeRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.byeRuns,
-                legByeRuns = if (lastBall.extraType == ExtraType.LEG_BYE) (liveInn.legByeRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.legByeRuns,
-                penaltyRuns = if (lastBall.extraType == ExtraType.PENALTY) (liveInn.penaltyRuns - totalRunsFromBall).coerceAtLeast(0) else liveInn.penaltyRuns,
+                wideRuns = if (lastBall.extraType == ExtraType.WIDE) (freshInn.wideRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.wideRuns,
+                noBallRuns = if (lastBall.extraType == ExtraType.NO_BALL) (freshInn.noBallRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.noBallRuns,
+                byeRuns = if (lastBall.extraType == ExtraType.BYE) (freshInn.byeRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.byeRuns,
+                legByeRuns = if (lastBall.extraType == ExtraType.LEG_BYE) (freshInn.legByeRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.legByeRuns,
+                penaltyRuns = if (lastBall.extraType == ExtraType.PENALTY) (freshInn.penaltyRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.penaltyRuns,
                 isCompleted = false
             )
             repository.updateInnings(updated)
-            refreshState(updated)
         }
+    }
+
+    /** Always fetches the live innings directly from DB to avoid stale state */
+    private suspend fun fetchLiveInnings(): InningsEntity? {
+        val match = repository.getMatch(matchId) ?: return null
+        val allInn = repository.getInningsForMatch(matchId)
+        return allInn.firstOrNull { it.inningsNumber == match.currentInningsNumber }
+            ?: allInn.lastOrNull()
     }
 
     private fun applyDelivery(
@@ -412,6 +441,7 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
         incomingBatsmanName: String = ""
     ) {
         viewModelScope.launch {
+            // Always read fresh from DB — never rely on stale UI state
             val match = repository.getMatch(matchId) ?: return@launch
             val allInningsInDb = repository.getInningsForMatch(matchId)
             val innings = allInningsInDb.firstOrNull { it.inningsNumber == match.currentInningsNumber } ?: return@launch
@@ -455,13 +485,8 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 strikerName = incomingBatsmanName.ifBlank { "Batsman $nextBatsmanNum" }
                 nextBatsmanNum += 1
             } else if (runs % 2 == 1 && extraType != ExtraType.PENALTY) {
-                val tempNum = strikerNum
-                strikerNum = nonStrikerNum
-                nonStrikerNum = tempNum
-
-                val tempName = strikerName
-                strikerName = nonStrikerName
-                nonStrikerName = tempName
+                val tempNum = strikerNum; strikerNum = nonStrikerNum; nonStrikerNum = tempNum
+                val tempName = strikerName; strikerName = nonStrikerName; nonStrikerName = tempName
             }
 
             // 4. Extras
@@ -484,13 +509,8 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
             if (newBallsThisOver >= 6) {
                 newCompletedOvers += 1
                 newBallsThisOver = 0
-                val tempNum = strikerNum
-                strikerNum = nonStrikerNum
-                nonStrikerNum = tempNum
-
-                val tempName = strikerName
-                strikerName = nonStrikerName
-                nonStrikerName = tempName
+                val tempNum = strikerNum; strikerNum = nonStrikerNum; nonStrikerNum = tempNum
+                val tempName = strikerName; strikerName = nonStrikerName; nonStrikerName = tempName
             }
 
             var updatedInnings = innings.copy(
@@ -516,15 +536,17 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
             val inningsOver = oversUp || allOut || targetChased
 
             if (!inningsOver) {
+                // Save and let the Flow observers update UI automatically
                 repository.updateInnings(updatedInnings)
-                refreshState(updatedInnings)
                 return@launch
             }
 
+            // Innings complete
             updatedInnings = updatedInnings.copy(isCompleted = true)
             repository.updateInnings(updatedInnings)
 
             if (innings.inningsNumber == 1) {
+                // Create 2nd innings and let the observer pick it up
                 val secondInnings = InningsEntity(
                     matchId = matchId,
                     inningsNumber = 2,
@@ -532,35 +554,32 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                     bowlingTeam = innings.battingTeam,
                     target = updatedInnings.totalRuns + 1
                 )
-                repository.createInnings(secondInnings)
+                // createInnings returns the real Room-assigned ID
+                val secondInningsId = repository.createInnings(secondInnings)
+
+                // Fetch back the entity with the proper ID from DB
+                val secondInningsFromDb = repository.getInningsForMatch(matchId)
+                    .firstOrNull { it.inningsNumber == 2 } ?: secondInnings.copy(inningsId = secondInningsId)
+
                 val updatedMatch = match.copy(currentInningsNumber = 2)
                 repository.updateMatch(updatedMatch)
 
-                val allInnings = listOf(updatedInnings, secondInnings)
+                // Update state with properly-ID'd 2nd innings
+                val allInnings = listOf(updatedInnings, secondInningsFromDb)
                 _uiState.value = _uiState.value.copy(
                     match = updatedMatch,
                     allInnings = allInnings,
-                    selectedTabIndex = 1
+                    selectedTabIndex = 1,
+                    hasAutoSwitchedToSecondInnings = true
                 )
             } else {
                 val allInn = repository.getInningsForMatch(matchId)
                 val firstInn = allInn.first { it.inningsNumber == 1 }
                 val resultText = buildResultText(firstInn, updatedInnings)
                 repository.updateMatch(match.copy(isCompleted = true, resultSummary = resultText))
-                _uiState.value = _uiState.value.copy(
-                    match = match.copy(isCompleted = true, resultSummary = resultText),
-                    matchCompleteMessage = resultText
-                )
+                // Let the match observer update matchCompleteMessage automatically
             }
         }
-    }
-
-    private fun refreshState(updatedInnings: InningsEntity) {
-        val currentList = _uiState.value.allInnings.map {
-            if (it.inningsId == updatedInnings.inningsId) updatedInnings else it
-        }
-        val finalList = if (currentList.any { it.inningsId == updatedInnings.inningsId }) currentList else currentList + updatedInnings
-        _uiState.value = _uiState.value.copy(allInnings = finalList)
     }
 
     private fun buildResultText(firstInnings: InningsEntity, secondInnings: InningsEntity): String {
@@ -569,7 +588,6 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
             secondInnings.wickets >= 10 -> "(All Out)"
             else -> "(Overs Completed)"
         }
-
         return when {
             secondInnings.totalRuns > firstInnings.totalRuns -> {
                 val wicketsInHand = 10 - secondInnings.wickets

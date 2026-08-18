@@ -25,7 +25,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.model.TossDecision
@@ -82,24 +81,6 @@ fun MatchSetupScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Text("Opening Batsmen Names", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = viewModel.strikerName,
-                    onValueChange = { viewModel.strikerName = it },
-                    label = { Text("Striker Name") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = viewModel.nonStrikerName,
-                    onValueChange = { viewModel.nonStrikerName = it },
-                    label = { Text("Non-Striker Name") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
             Text("Toss Winner", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 val teamAValid = viewModel.teamAName.isNotBlank()
@@ -130,6 +111,33 @@ fun MatchSetupScreen(
                     label = { Text("Bowl First") }
                 )
             }
+
+            Text("Opening Batsmen Names", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = viewModel.strikerName,
+                    onValueChange = { viewModel.strikerName = it },
+                    label = { Text("Striker Name") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = viewModel.nonStrikerName,
+                    onValueChange = { viewModel.nonStrikerName = it },
+                    label = { Text("Non-Striker Name") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Text("Opening Bowler Name", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = viewModel.openingBowlerName,
+                onValueChange = { viewModel.openingBowlerName = it },
+                label = { Text("Opening Bowler Name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
 
             viewModel.errorMessage?.let { error ->
                 Text(error, color = MaterialTheme.colorScheme.error)

@@ -17,6 +17,7 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
     var teamBName by mutableStateOf("")
     var strikerName by mutableStateOf("Batsman 1")
     var nonStrikerName by mutableStateOf("Batsman 2")
+    var openingBowlerName by mutableStateOf("")
     var totalOvers by mutableStateOf("20")
     var tossWinnerTeam by mutableStateOf<String?>(null)
     var tossDecision by mutableStateOf(TossDecision.BAT)
@@ -78,7 +79,8 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
                 battingTeam = battingFirst,
                 bowlingTeam = bowlingFirst,
                 strikerName = strikerName.ifBlank { "Batsman 1" },
-                nonStrikerName = nonStrikerName.ifBlank { "Batsman 2" }
+                nonStrikerName = nonStrikerName.ifBlank { "Batsman 2" },
+                currentBowlerName = openingBowlerName.ifBlank { "Bowler 1" }
             )
             val inningsId = repository.createInnings(firstInnings)
 
