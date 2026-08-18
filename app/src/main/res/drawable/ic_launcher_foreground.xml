@@ -4,17 +4,47 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Ball -->
+
+    <!-- 3 Stumps (Wooden Gold) -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,30 m-22,0 a22,22 0 1 1 44,0 a22,22 0 1 1 -44,0" />
-    <!-- Seam -->
+        android:fillColor="#F4A261"
+        android:pathData="M44,40h4v34h-4z M52,38h4v36h-4z M60,40h4v34h-4z" />
+    <!-- Bails -->
     <path
-        android:strokeColor="#1B5E20"
-        android:strokeWidth="2"
-        android:pathData="M36,20 Q54,30 36,40" />
+        android:fillColor="#E76F51"
+        android:pathData="M42,37h9v3h-9z M51,36h9v3h-9z" />
+
+    <!-- Cricket Bat (Angled Diagonal) -->
+    <!-- Handle -->
     <path
-        android:strokeColor="#1B5E20"
-        android:strokeWidth="2"
-        android:pathData="M72,20 Q54,30 72,40" />
+        android:fillColor="#264653"
+        android:pathData="M33,31 L37,27 L43,33 L39,37 Z" />
+    <!-- Blade -->
+    <path
+        android:fillColor="#E9C46A"
+        android:pathData="M39,37 L67,65 C69,67 68,71 65,74 C62,77 58,78 56,76 L28,48 Z" />
+    <!-- Bat Grip Wrap Lines -->
+    <path
+        android:strokeColor="#E76F51"
+        android:strokeWidth="1.5"
+        android:pathData="M35,33 L39,29 M37,35 L41,31" />
+
+    <!-- Red Cricket Ball -->
+    <path
+        android:fillColor="#D90429"
+        android:pathData="M70,62m-13,0a13,13 0 1,0 26,0a13,13 0 1,0 -26,0" />
+    <!-- Ball Highlight -->
+    <path
+        android:fillColor="#EF233C"
+        android:pathData="M66,54a9,9 0 0,1 11,0a12,12 0 0,0 -11,0" />
+    <!-- White Seam Stitching -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:pathData="M61,53 Q70,62 79,71" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:strokeDasharray="1,2"
+        android:pathData="M60,54 Q69,63 78,72 M62,52 Q71,61 80,70" />
 </vector>

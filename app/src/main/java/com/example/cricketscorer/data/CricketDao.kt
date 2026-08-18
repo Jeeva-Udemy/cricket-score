@@ -26,6 +26,9 @@ interface CricketDao {
     @Query("SELECT * FROM matches ORDER BY createdAt DESC")
     fun observeAllMatches(): Flow<List<MatchEntity>>
 
+    @Query("DELETE FROM matches WHERE matchId IN (:matchIds)")
+    suspend fun deleteMatches(matchIds: List<Long>)
+
     // ---------- Innings ----------
 
     @Insert
@@ -46,6 +49,9 @@ interface CricketDao {
     @Query("SELECT * FROM innings WHERE matchId = :matchId ORDER BY inningsNumber ASC")
     fun observeInningsForMatch(matchId: Long): Flow<List<InningsEntity>>
 
+    @Query("DELETE FROM innings WHERE matchId IN (:matchIds)")
+    suspend fun deleteInningsForMatches(matchIds: List<Long>)
+
     // ---------- Ball events ----------
 
     @Insert
@@ -59,4 +65,7 @@ interface CricketDao {
 
     @Query("DELETE FROM ball_events WHERE ballId = :ballId")
     suspend fun deleteBallEvent(ballId: Long)
+
+    @Query("DELETE FROM ball_events WHERE inningsId IN (SELECT inningsId FROM innings WHERE matchId IN (:matchIds))")
+    suspend fun deleteBallEventsForMatches(matchIds: List<Long>)
 }
