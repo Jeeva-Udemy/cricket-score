@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Backed by the framework's own Material theme (API 21+), not the
+         com.google.android.material XML library, which this pure-Compose
+         project does not depend on. Compose's own MaterialTheme{} in
+         MainActivity handles all in-app theming; this is just the window
+         theme used before Compose content is drawn. -->
+    <style name="Theme.CricketScorer" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/cricket_green</item>
+        <item name="android:windowBackground">@color/cricket_background</item>
+    </style>
+</resources>
