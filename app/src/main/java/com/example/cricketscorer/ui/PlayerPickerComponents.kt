@@ -1,15 +1,15 @@
 package com.example.cricketscorer.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -19,15 +19,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.cricketscorer.data.SquadEntity
 
 /**
- * Dropdown to optionally pick a saved squad for a team. Selecting "No saved
- * squad (type names)" clears the selection so the caller can fall back to
- * free-text entry.
+ * Dropdown to optionally pick a saved squad for a team.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,21 +51,19 @@ fun SquadDropdown(
                 .menuAnchor()
                 .fillMaxWidth()
         )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 240.dp)
+        ) {
             DropdownMenuItem(
                 text = { Text("No saved squad (type names)") },
-                onClick = {
-                    onSelect(null)
-                    expanded = false
-                }
+                onClick = { onSelect(null); expanded = false }
             )
             squads.forEach { squad ->
                 DropdownMenuItem(
                     text = { Text(squad.teamName) },
-                    onClick = {
-                        onSelect(squad)
-                        expanded = false
-                    }
+                    onClick = { onSelect(squad); expanded = false }
                 )
             }
         }
@@ -77,10 +71,12 @@ fun SquadDropdown(
 }
 
 /**
- * Text field for a player's name that also shows quick-select chips for
- * players from the linked squad who aren't already picked elsewhere,
- * plus a free-text fallback for teams with no saved squad.
+ * A text field with an optional dropdown of player names to pick from.
+ * Replaces the old horizontal-scrolling chip row — the dropdown scrolls
+ * vertically so long squad lists are fully accessible without horizontal swiping.
+ * Free-text entry is always available when the list is empty or the player isn't listed.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerPickerField(
     label: String,
@@ -89,22 +85,45 @@ fun PlayerPickerField(
     availablePlayerNames: List<String>,
     modifier: Modifier = Modifier
 ) {
-    androidx.compose.foundation.layout.Column(modifier = modifier) {
+    if (availablePlayerNames.isEmpty()) {
+        // No squad linked — plain text field only
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             label = { Text(label) },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+            modifier = modifier.fillMaxWidth()
         )
-        if (availablePlayerNames.isNotEmpty()) {
-            androidx.compose.foundation.layout.Spacer(Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(availablePlayerNames) { name ->
-                    FilterChip(
-                        selected = value == name,
-                        onClick = { onValueChange(name) },
-                        label = { Text(name, fontSize = 12.sp) }
+        return
+    }
+
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(modifier = modifier) {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it }
+        ) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { onValueChange(it); expanded = false },
+                label = { Text(label) },
+                singleLine = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.heightIn(max = 220.dp)
+            ) {
+                availablePlayerNames.forEach { name ->
+                    DropdownMenuItem(
+                        text = { Text(name) },
+                        onClick = { onValueChange(name); expanded = false },
+                        contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                     )
                 }
             }

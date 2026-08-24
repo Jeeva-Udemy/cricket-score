@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -75,9 +77,12 @@ fun SquadScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp)
+                .imePadding()          // shrinks away from soft keyboard
+                .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Spacer(Modifier.height(8.dp))
             Text(
                 "Save a team's players once, then reuse the same squad every time you play " +
                     "that team again — no need to retype names for each match.",
@@ -102,7 +107,10 @@ fun SquadScreen(
                     )
                 }
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f)
+                ) {
                     items(squads, key = { it.squadId }) { squad ->
                         LaunchedEffect(squad.squadId) {
                             viewModel.ensurePlayersObserved(squad.squadId)
@@ -126,6 +134,7 @@ fun SquadScreen(
                     }
                 }
             }
+            Spacer(Modifier.height(8.dp))
         }
     }
 

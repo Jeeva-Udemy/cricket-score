@@ -260,170 +260,163 @@ private fun LiveScoreTabContent(
     val match = state.match!!
     val innings = state.currentInnings!!
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Score Header
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    "${innings.battingTeam} vs ${innings.bowlingTeam} (${innings.inningsNumber}st/nd Innings)",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(Modifier.height(4.dp))
+    // Two-pane layout: fixed score header always visible at top, scrollable controls below.
+    // This prevents the score from disappearing behind the keyboard or when scrolling to buttons.
+    Column(modifier = Modifier.fillMaxSize()) {
+
+        // ── Fixed top panel: score + batsmen + bowler + this-over chips ──────────
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Score row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
                     "${innings.totalRuns}/${innings.wickets}",
                     style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.Bold
                 )
-                Text("Overs: ${state.oversDisplay} / ${match.totalOvers}")
-                Text("Run Rate: %.2f".format(state.runRate))
-                state.target?.let { target ->
-                    Text("Target: $target  •  Need ${state.runsNeeded} from ${state.ballsRemaining} balls")
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Ovs: ${state.oversDisplay}/${match.totalOvers}", style = MaterialTheme.typography.bodyMedium)
+                    Text("RR: %.2f".format(state.runRate), style = MaterialTheme.typography.bodySmall)
+                    state.target?.let {
+                        Text(
+                            "Need ${state.runsNeeded} off ${state.ballsRemaining}b",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
-                Text("Extras: W ${innings.wideRuns} | NB ${innings.noBallRuns} | B ${innings.byeRuns} | LB ${innings.legByeRuns} | PEN ${innings.penaltyRuns}")
-                Text(
-                    "Players per team: ${match.playersPerTeam} (all out at ${match.playersPerTeam - 1} wickets)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
-        }
 
-        // Batsmen at crease
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            // Batsmen + bowler compact row
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("⚔ ${innings.strikerName}*", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text("  ${innings.nonStrikerName}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("🏏 ${innings.currentBowlerName}", fontSize = 13.sp)
+                }
+            }
+
+            // This over chips in a single scrollable row
+            if (state.currentOverBalls.isNotEmpty()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text("Striker: ${innings.strikerName}*", fontWeight = FontWeight.Bold)
-                        Text("Non-striker: ${innings.nonStrikerName}")
-                    }
-                    if (state.isCurrentInningsLive) {
-                        OutlinedButton(
-                            onClick = onEditBatsmen,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text("Edit Names", fontSize = 12.sp)
-                        }
+                    Text("Over:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(state.currentOverBalls) { ball -> BallChip(ball) }
                     }
                 }
             }
-        }
 
-        // Current Bowler
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Bowler: ${innings.currentBowlerName}", fontWeight = FontWeight.Bold)
-                if (state.isCurrentInningsLive) {
-                    OutlinedButton(
-                        onClick = onEditBowler,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text("Change Bowler", fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-
-        // This Over
-        Text("This Over:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(state.currentOverBalls) { ball -> BallChip(ball) }
+            // Extras compact
+            Text(
+                "Extras  W:${innings.wideRuns} NB:${innings.noBallRuns} B:${innings.byeRuns} LB:${innings.legByeRuns} P:${innings.penaltyRuns}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         Divider()
 
-        // Scoring Controls
+        // ── Scrollable controls panel ─────────────────────────────────────────
         val resultMessage = state.matchCompleteMessage
-        if (resultMessage != null) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("🎉 Match Complete", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(resultMessage, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    OutlinedButton(onClick = { viewModel.undoLastBall() }) {
-                        Text("Undo Last Ball")
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (resultMessage != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("🎉 Match Complete", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(resultMessage, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        OutlinedButton(onClick = { viewModel.undoLastBall() }) { Text("Undo Last Ball") }
                     }
                 }
-            }
-        } else if (!state.isCurrentInningsLive) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Box(modifier = Modifier.padding(16.dp), contentAlignment = Alignment.Center) {
-                    Text("Viewing completed innings (Switch tabs to score active innings)", style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-        } else {
-            Text("Runs", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                listOf(0, 1, 2, 3, 4, 6).forEach { run ->
-                    Button(onClick = { viewModel.recordRuns(run) }, modifier = Modifier.weight(1f)) {
-                        Text(run.toString())
+            } else if (!state.isCurrentInningsLive) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.padding(16.dp), contentAlignment = Alignment.Center) {
+                        Text("Viewing completed innings — switch tab to score the live innings.")
                     }
                 }
-            }
+            } else {
+                // Edit names row
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onEditBatsmen, modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)) {
+                        Text("Edit Batsmen", fontSize = 12.sp)
+                    }
+                    OutlinedButton(onClick = onEditBowler, modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)) {
+                        Text("Change Bowler", fontSize = 12.sp)
+                    }
+                }
 
-            Text("Extras", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
-                val extrasList = listOf(
-                    "WD" to ExtraType.WIDE,
-                    "NB" to ExtraType.NO_BALL,
-                    "BYE" to ExtraType.BYE,
-                    "LB" to ExtraType.LEG_BYE
+                // Run buttons
+                Text("Runs", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf(0, 1, 2, 3, 4, 6).forEach { run ->
+                        Button(onClick = { viewModel.recordRuns(run) }, modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(0.dp)) {
+                            Text(run.toString())
+                        }
+                    }
+                }
+
+                // Extras
+                Text("Extras", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf("WD" to ExtraType.WIDE, "NB" to ExtraType.NO_BALL,
+                           "BYE" to ExtraType.BYE, "LB" to ExtraType.LEG_BYE).forEach { (label, type) ->
+                        OutlinedButton(onClick = { onExtraClick(type) }, modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)) {
+                            Text(label, fontSize = 11.sp, maxLines = 1)
+                        }
+                    }
+                    OutlinedButton(onClick = onPenaltyClick, modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)) {
+                        Text("PEN", fontSize = 11.sp, maxLines = 1)
+                    }
+                }
+
+                // Wicket + Undo
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = onWicketClick,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.weight(1f)) {
+                        Text("Wicket")
+                    }
+                    OutlinedButton(onClick = { viewModel.undoLastBall() }, modifier = Modifier.weight(1f)) {
+                        Text("Undo")
+                    }
+                }
+
+                OutlinedButton(onClick = onCompleteInningsClick, modifier = Modifier.fillMaxWidth()) {
+                    Text("Complete Innings")
+                }
+
+                Text(
+                    "Players: ${match.playersPerTeam} per side  •  All out at ${match.playersPerTeam - 1} wickets",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                extrasList.forEach { (label, type) ->
-                    OutlinedButton(
-                        onClick = { onExtraClick(type) },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
-                    ) {
-                        Text(label, fontSize = 11.sp, maxLines = 1)
-                    }
-                }
-                OutlinedButton(
-                    onClick = onPenaltyClick,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
-                ) {
-                    Text("PEN", fontSize = 11.sp, maxLines = 1)
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = onWicketClick,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Wicket")
-                }
-                OutlinedButton(onClick = { viewModel.undoLastBall() }, modifier = Modifier.weight(1f)) {
-                    Text("Undo")
-                }
-            }
-
-            // Manual innings completion — for local games where the full XI is never on the
-            // field, "all out" may never trigger naturally, so this lets the side end the
-            // innings and move on whenever they're ready.
-            OutlinedButton(
-                onClick = onCompleteInningsClick,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Complete Innings")
+                Spacer(Modifier.height(16.dp)) // breathing room above system nav bar
             }
         }
     }
@@ -687,35 +680,17 @@ private fun EditBowlerDialog(
         onDismissRequest = onDismiss,
         title = { Text("Select or Enter Bowler") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (existingBowlers.isNotEmpty()) {
-                    Text("Select from previous bowlers:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(existingBowlers) { bName ->
-                            FilterChip(
-                                selected = bowlerName == bName,
-                                onClick = {
-                                    bowlerName = bName
-                                    onConfirm(bName)
-                                },
-                                label = { Text(bName) }
-                            )
-                        }
-                    }
-                }
-                OutlinedTextField(
-                    value = bowlerName,
-                    onValueChange = { bowlerName = it },
-                    label = { Text("Or Type New Bowler Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
+            // Single dropdown picker — shows the full bowlers list with scroll,
+            // plus allows free-text for a new name not in the list.
+            PlayerPickerField(
+                label = "Bowler Name",
+                value = bowlerName,
+                onValueChange = { bowlerName = it },
+                availablePlayerNames = existingBowlers
+            )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(bowlerName) }) {
-                Text("Save")
-            }
+            TextButton(onClick = { onConfirm(bowlerName) }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

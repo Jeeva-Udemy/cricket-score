@@ -296,6 +296,7 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     private var observedBattingSquadId: Long? = null
     private var bowlingSquadObserveJob: Job? = null
     private var observedBowlingSquadId: Long? = null
+    private var _lastObservedInningsNumber: Int? = null
 
     private val _uiState = MutableStateFlow(ScoringUiState())
     val uiState: StateFlow<ScoringUiState> = _uiState.asStateFlow()
@@ -338,9 +339,17 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                         isLoading = false
                     )
 
-                    // Subscribe to squad player lists for the live innings' batting/bowling squads
+                    // Subscribe to squad player lists for the live innings' batting/bowling squads.
+                    // Always re-evaluate by clearing the cached IDs so the swap between innings
+                    // (where batting and bowling squads exchange roles) is always picked up.
                     val activeNumber = _uiState.value.match?.currentInningsNumber ?: 1
                     val live = inningsList.firstOrNull { it.inningsNumber == activeNumber } ?: inningsList.lastOrNull()
+                    // Force re-subscribe by resetting cached IDs when the live innings changes
+                    if (live?.inningsNumber != _lastObservedInningsNumber) {
+                        _lastObservedInningsNumber = live?.inningsNumber
+                        observedBattingSquadId = null
+                        observedBowlingSquadId = null
+                    }
                     observeSquadPlayers(live?.battingSquadId, isBattingSquad = true)
                     observeSquadPlayers(live?.bowlingSquadId, isBattingSquad = false)
                 }
@@ -397,6 +406,13 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
 
     fun selectInningsTab(tabIndex: Int) {
         _uiState.value = _uiState.value.copy(selectedTabIndex = tabIndex)
+        // When the user manually switches tabs, refresh the squad player lists
+        // for whichever innings is now being viewed (batting/bowling squads swap between innings)
+        val innings = _uiState.value.allInnings.firstOrNull {
+            it.inningsNumber == tabIndex + 1
+        } ?: return
+        observeSquadPlayers(innings.battingSquadId, isBattingSquad = true)
+        observeSquadPlayers(innings.bowlingSquadId, isBattingSquad = false)
     }
 
     fun selectSubTab(subTabIndex: Int) {
