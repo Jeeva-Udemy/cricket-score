@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.cricketscorer.data.BallEventEntity
+import com.example.cricketscorer.model.DismissedEnd
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.WicketType
 import com.example.cricketscorer.viewmodel.ScoringViewModel
@@ -75,6 +77,7 @@ fun ScoringScreen(
     var showPenaltyDialog by remember { mutableStateOf(false) }
     var showEditBatsmenDialog by remember { mutableStateOf(false) }
     var showEditBowlerDialog by remember { mutableStateOf(false) }
+    var showCompleteInningsDialog by remember { mutableStateOf(false) }
 
     if (state.isLoading || state.match == null || state.currentInnings == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -150,7 +153,8 @@ fun ScoringScreen(
                 onEditBowler = { showEditBowlerDialog = true },
                 onWicketClick = { showWicketDialog = true },
                 onExtraClick = { showExtraDialogFor = it },
-                onPenaltyClick = { showPenaltyDialog = true }
+                onPenaltyClick = { showPenaltyDialog = true },
+                onCompleteInningsClick = { showCompleteInningsDialog = true }
             )
             1 -> ScorecardTabContent(state = state)
             2 -> OversTabContent(state = state)
@@ -183,6 +187,7 @@ fun ScoringScreen(
         EditBatsmenDialog(
             currentStriker = innings.strikerName,
             currentNonStriker = innings.nonStrikerName,
+            availablePlayers = state.availableIncomingBatsmen,
             onDismiss = { showEditBatsmenDialog = false },
             onConfirm = { sName, nsName ->
                 viewModel.updateBatsmanNames(sName, nsName)
@@ -205,11 +210,37 @@ fun ScoringScreen(
 
     if (showWicketDialog) {
         WicketDialog(
+            strikerName = innings.strikerName,
+            nonStrikerName = innings.nonStrikerName,
             nextBatsmanDefault = "Batsman ${innings.nextBatsmanNumber}",
+            availableIncomingBatsmen = state.availableIncomingBatsmen,
             onDismiss = { showWicketDialog = false },
-            onConfirm = { wicketType, runsCompleted, newBatsmanName ->
-                viewModel.recordWicket(wicketType, runsCompleted, newBatsmanName)
+            onConfirm = { wicketType, runsCompleted, newBatsmanName, dismissedEnd ->
+                viewModel.recordWicket(wicketType, runsCompleted, newBatsmanName, dismissedEnd)
                 showWicketDialog = false
+            }
+        )
+    }
+
+    if (showCompleteInningsDialog) {
+        AlertDialog(
+            onDismissRequest = { showCompleteInningsDialog = false },
+            title = { Text("Complete Innings?") },
+            text = {
+                Text(
+                    "End this innings now with the current score of ${innings.totalRuns}/${innings.wickets}? " +
+                        "Use this when your side doesn't have a full XI on the day and everyone available is out, " +
+                        "or you simply want to move on."
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.completeInningsManually()
+                    showCompleteInningsDialog = false
+                }) { Text("Complete Innings") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCompleteInningsDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -223,7 +254,8 @@ private fun LiveScoreTabContent(
     onEditBowler: () -> Unit,
     onWicketClick: () -> Unit,
     onExtraClick: (ExtraType) -> Unit,
-    onPenaltyClick: () -> Unit
+    onPenaltyClick: () -> Unit,
+    onCompleteInningsClick: () -> Unit
 ) {
     val match = state.match!!
     val innings = state.currentInnings!!
@@ -254,6 +286,11 @@ private fun LiveScoreTabContent(
                     Text("Target: $target  •  Need ${state.runsNeeded} from ${state.ballsRemaining} balls")
                 }
                 Text("Extras: W ${innings.wideRuns} | NB ${innings.noBallRuns} | B ${innings.byeRuns} | LB ${innings.legByeRuns} | PEN ${innings.penaltyRuns}")
+                Text(
+                    "Players per team: ${match.playersPerTeam} (all out at ${match.playersPerTeam - 1} wickets)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -377,6 +414,16 @@ private fun LiveScoreTabContent(
                 OutlinedButton(onClick = { viewModel.undoLastBall() }, modifier = Modifier.weight(1f)) {
                     Text("Undo")
                 }
+            }
+
+            // Manual innings completion — for local games where the full XI is never on the
+            // field, "all out" may never trigger naturally, so this lets the side end the
+            // innings and move on whenever they're ready.
+            OutlinedButton(
+                onClick = onCompleteInningsClick,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Complete Innings")
             }
         }
     }
@@ -591,6 +638,7 @@ private fun PenaltyRunsDialog(
 private fun EditBatsmenDialog(
     currentStriker: String,
     currentNonStriker: String,
+    availablePlayers: List<String>,
     onDismiss: () -> Unit,
     onConfirm: (String, String) -> Unit
 ) {
@@ -602,19 +650,17 @@ private fun EditBatsmenDialog(
         title = { Text("Edit Batsmen Names") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
+                PlayerPickerField(
+                    label = "Striker Name",
                     value = strikerName,
                     onValueChange = { strikerName = it },
-                    label = { Text("Striker Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    availablePlayerNames = availablePlayers.filter { it != nonStrikerName }
                 )
-                OutlinedTextField(
+                PlayerPickerField(
+                    label = "Non-Striker Name",
                     value = nonStrikerName,
                     onValueChange = { nonStrikerName = it },
-                    label = { Text("Non-Striker Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    availablePlayerNames = availablePlayers.filter { it != strikerName }
                 )
             }
         },
@@ -677,13 +723,17 @@ private fun EditBowlerDialog(
 
 @Composable
 private fun WicketDialog(
+    strikerName: String,
+    nonStrikerName: String,
     nextBatsmanDefault: String,
+    availableIncomingBatsmen: List<String>,
     onDismiss: () -> Unit,
-    onConfirm: (WicketType, Int, String) -> Unit
+    onConfirm: (WicketType, Int, String, DismissedEnd) -> Unit
 ) {
     var selectedType by remember { mutableStateOf<WicketType?>(null) }
     var runsCompleted by remember { mutableStateOf(0) }
     var newBatsmanName by remember { mutableStateOf(nextBatsmanDefault) }
+    var dismissedEnd by remember { mutableStateOf(DismissedEnd.STRIKER) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -711,20 +761,38 @@ private fun WicketDialog(
                             )
                         }
                     }
+
+                    Spacer(Modifier.height(4.dp))
+                    Text("Which batsman is out?", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        val outName = if (dismissedEnd == DismissedEnd.STRIKER) strikerName else nonStrikerName
+                        Text(
+                            "$outName ${if (dismissedEnd == DismissedEnd.STRIKER) "(Striker)" else "(Non-Striker)"}",
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            dismissedEnd = if (dismissedEnd == DismissedEnd.STRIKER) DismissedEnd.NON_STRIKER else DismissedEnd.STRIKER
+                        }) {
+                            Icon(Icons.Default.SwapVert, contentDescription = "Swap which batsman is out")
+                        }
+                    }
+                } else {
+                    // For every other dismissal type, it's always the batsman facing the ball.
+                    LaunchedEffect(selectedType) { dismissedEnd = DismissedEnd.STRIKER }
                 }
                 Spacer(Modifier.height(4.dp))
-                OutlinedTextField(
+                PlayerPickerField(
+                    label = "Incoming Batsman Name",
                     value = newBatsmanName,
                     onValueChange = { newBatsmanName = it },
-                    label = { Text("Incoming Batsman Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    availablePlayerNames = availableIncomingBatsmen
                 )
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { selectedType?.let { onConfirm(it, runsCompleted, newBatsmanName) } },
+                onClick = { selectedType?.let { onConfirm(it, runsCompleted, newBatsmanName, dismissedEnd) } },
                 enabled = selectedType != null
             ) { Text("Confirm") }
         },

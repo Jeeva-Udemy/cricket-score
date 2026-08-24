@@ -7,8 +7,14 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
 @Database(
-    entities = [MatchEntity::class, InningsEntity::class, BallEventEntity::class],
-    version = 3,
+    entities = [
+        MatchEntity::class,
+        InningsEntity::class,
+        BallEventEntity::class,
+        SquadEntity::class,
+        PlayerEntity::class
+    ],
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

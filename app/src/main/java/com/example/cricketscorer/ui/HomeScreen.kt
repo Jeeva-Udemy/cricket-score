@@ -52,7 +52,8 @@ import java.util.Locale
 fun HomeScreen(
     viewModel: HomeViewModel,
     onStartNewMatch: () -> Unit,
-    onOpenMatch: (matchId: Long) -> Unit
+    onOpenMatch: (matchId: Long) -> Unit,
+    onManageSquads: () -> Unit
 ) {
     val matches by viewModel.matches.collectAsState()
     val selectedMatchIds by viewModel.selectedMatchIds.collectAsState()
@@ -110,6 +111,13 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("+ Create New Match", style = MaterialTheme.typography.titleMedium)
+            }
+
+            androidx.compose.material3.OutlinedButton(
+                onClick = onManageSquads,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Manage Squads")
             }
 
             Row(

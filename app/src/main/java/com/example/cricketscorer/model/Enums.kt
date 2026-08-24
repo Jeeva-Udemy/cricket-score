@@ -35,3 +35,13 @@ enum class WicketType {
     STUMPED,
     HIT_WICKET
 }
+
+/**
+ * Which end of the crease the dismissed batsman was standing at.
+ * Needed for run-outs, where either the striker or the non-striker
+ * can be the one who gets out (e.g. non-striker run out backing up).
+ */
+enum class DismissedEnd {
+    STRIKER,
+    NON_STRIKER
+}

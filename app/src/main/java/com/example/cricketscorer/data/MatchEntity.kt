@@ -13,6 +13,12 @@ data class MatchEntity(
     val teamAName: String,
     val teamBName: String,
     val totalOvers: Int,
+    /** Players per side for this match. Local games rarely field a full 11, so this is
+     *  configurable per match and drives the "all out" threshold (playersPerTeam - 1). */
+    val playersPerTeam: Int = 11,
+    /** Saved squad each team was picked from, if any (nullable — teams can still be typed ad-hoc). */
+    val teamASquadId: Long? = null,
+    val teamBSquadId: Long? = null,
     val tossWinnerTeam: String,
     val tossDecision: TossDecision,
     val currentInningsNumber: Int = 1,

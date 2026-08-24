@@ -29,6 +29,10 @@ data class InningsEntity(
     val inningsNumber: Int,
     val battingTeam: String,
     val bowlingTeam: String,
+    /** Squad the batting/bowling team was selected from, if any, so the scoring
+     *  screen can offer a "pick from squad" list for batsmen/bowlers. */
+    val battingSquadId: Long? = null,
+    val bowlingSquadId: Long? = null,
     val totalRuns: Int = 0,
     val wickets: Int = 0,
     val completedOvers: Int = 0,

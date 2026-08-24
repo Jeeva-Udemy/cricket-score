@@ -17,9 +17,11 @@ import androidx.navigation.navArgument
 import com.example.cricketscorer.ui.HomeScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
 import com.example.cricketscorer.ui.ScoringScreen
+import com.example.cricketscorer.ui.SquadScreen
 import com.example.cricketscorer.viewmodel.HomeViewModel
 import com.example.cricketscorer.viewmodel.MatchSetupViewModel
 import com.example.cricketscorer.viewmodel.ScoringViewModel
+import com.example.cricketscorer.viewmodel.SquadViewModel
 import com.example.cricketscorer.viewmodel.ViewModelFactory
 
 class MainActivity : ComponentActivity() {
@@ -50,7 +52,16 @@ fun CricketNavHost(factory: ViewModelFactory) {
             HomeScreen(
                 viewModel = homeViewModel,
                 onStartNewMatch = { navController.navigate("setup") },
-                onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") }
+                onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") },
+                onManageSquads = { navController.navigate("squads") }
+            )
+        }
+
+        composable("squads") {
+            val squadViewModel: SquadViewModel = viewModel(factory = factory)
+            SquadScreen(
+                viewModel = squadViewModel,
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 
@@ -59,6 +70,7 @@ fun CricketNavHost(factory: ViewModelFactory) {
             MatchSetupScreen(
                 viewModel = setupViewModel,
                 onNavigateBack = { navController.popBackStack() },
+                onManageSquads = { navController.navigate("squads") },
                 onMatchStarted = { matchId, inningsId ->
                     navController.navigate("scoring/$matchId/$inningsId") {
                         popUpTo("home")

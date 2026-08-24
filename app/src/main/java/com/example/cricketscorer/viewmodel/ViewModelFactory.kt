@@ -15,6 +15,8 @@ class ViewModelFactory(private val repository: CricketRepository) : ViewModelPro
                 MatchSetupViewModel(repository) as T
             modelClass.isAssignableFrom(ScoringViewModel::class.java) ->
                 ScoringViewModel(repository) as T
+            modelClass.isAssignableFrom(SquadViewModel::class.java) ->
+                SquadViewModel(repository) as T
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
     }

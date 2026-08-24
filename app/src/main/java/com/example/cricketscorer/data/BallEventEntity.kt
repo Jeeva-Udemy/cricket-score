@@ -33,6 +33,9 @@ data class BallEventEntity(
     val isWicket: Boolean,
     val strikerBatsmanNumber: Int,
     val strikerName: String = "",
+    /** Name of the batsman actually dismissed on this ball. Usually equals
+     *  strikerName, but on a run-out it may be the non-striker instead. */
+    val dismissedPlayerName: String = "",
     val bowlerName: String = "Bowler 1",
     val timestamp: Long = System.currentTimeMillis()
 )

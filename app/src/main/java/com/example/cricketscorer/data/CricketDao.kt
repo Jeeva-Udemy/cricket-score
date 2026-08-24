@@ -68,4 +68,38 @@ interface CricketDao {
 
     @Query("DELETE FROM ball_events WHERE inningsId IN (SELECT inningsId FROM innings WHERE matchId IN (:matchIds))")
     suspend fun deleteBallEventsForMatches(matchIds: List<Long>)
+
+    // ---------- Squads ----------
+
+    @Insert
+    suspend fun insertSquad(squad: SquadEntity): Long
+
+    @Update
+    suspend fun updateSquad(squad: SquadEntity)
+
+    @Query("DELETE FROM squads WHERE squadId = :squadId")
+    suspend fun deleteSquad(squadId: Long)
+
+    @Query("SELECT * FROM squads ORDER BY teamName ASC")
+    fun observeAllSquads(): Flow<List<SquadEntity>>
+
+    @Query("SELECT * FROM squads WHERE squadId = :squadId")
+    suspend fun getSquad(squadId: Long): SquadEntity?
+
+    // ---------- Players ----------
+
+    @Insert
+    suspend fun insertPlayer(player: PlayerEntity): Long
+
+    @Update
+    suspend fun updatePlayer(player: PlayerEntity)
+
+    @Query("DELETE FROM players WHERE playerId = :playerId")
+    suspend fun deletePlayer(playerId: Long)
+
+    @Query("SELECT * FROM players WHERE squadId = :squadId ORDER BY createdAt ASC")
+    fun observePlayersForSquad(squadId: Long): Flow<List<PlayerEntity>>
+
+    @Query("SELECT * FROM players WHERE squadId = :squadId ORDER BY createdAt ASC")
+    suspend fun getPlayersForSquad(squadId: Long): List<PlayerEntity>
 }

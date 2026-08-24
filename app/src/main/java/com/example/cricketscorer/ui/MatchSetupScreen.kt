@@ -21,8 +21,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -35,8 +38,13 @@ import com.example.cricketscorer.viewmodel.MatchSetupViewModel
 fun MatchSetupScreen(
     viewModel: MatchSetupViewModel,
     onNavigateBack: () -> Unit,
+    onManageSquads: () -> Unit,
     onMatchStarted: (matchId: Long, inningsId: Long) -> Unit
 ) {
+    val squads by viewModel.squads.collectAsState()
+    val squadAPlayers by viewModel.squadAPlayers.collectAsState()
+    val squadBPlayers by viewModel.squadBPlayers.collectAsState()
+
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -56,6 +64,17 @@ fun MatchSetupScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            TextButton(onClick = onManageSquads) {
+                Text("Manage Saved Squads →")
+            }
+
+            Text("Team A", style = MaterialTheme.typography.titleMedium)
+            SquadDropdown(
+                label = "Team A Squad (optional)",
+                squads = squads,
+                selected = viewModel.selectedSquadA,
+                onSelect = { viewModel.selectSquadForTeamA(it) }
+            )
             OutlinedTextField(
                 value = viewModel.teamAName,
                 onValueChange = { viewModel.teamAName = it },
@@ -64,6 +83,13 @@ fun MatchSetupScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            Text("Team B", style = MaterialTheme.typography.titleMedium)
+            SquadDropdown(
+                label = "Team B Squad (optional)",
+                squads = squads,
+                selected = viewModel.selectedSquadB,
+                onSelect = { viewModel.selectSquadForTeamB(it) }
+            )
             OutlinedTextField(
                 value = viewModel.teamBName,
                 onValueChange = { viewModel.teamBName = it },
@@ -72,13 +98,29 @@ fun MatchSetupScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            OutlinedTextField(
-                value = viewModel.totalOvers,
-                onValueChange = { if (it.all { c -> c.isDigit() }) viewModel.totalOvers = it },
-                label = { Text("Total Overs") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = viewModel.totalOvers,
+                    onValueChange = { if (it.all { c -> c.isDigit() }) viewModel.totalOvers = it },
+                    label = { Text("Total Overs") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = viewModel.playersPerTeam,
+                    onValueChange = { if (it.all { c -> c.isDigit() }) viewModel.playersPerTeam = it },
+                    label = { Text("Players per Team") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Text(
+                "Set this to however many players you're actually fielding — the innings will " +
+                    "end automatically once that many wickets fall.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Text("Toss Winner", style = MaterialTheme.typography.titleMedium)
@@ -112,31 +154,41 @@ fun MatchSetupScreen(
                 )
             }
 
-            Text("Opening Batsmen Names", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = viewModel.strikerName,
-                    onValueChange = { viewModel.strikerName = it },
-                    label = { Text("Striker Name") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = viewModel.nonStrikerName,
-                    onValueChange = { viewModel.nonStrikerName = it },
-                    label = { Text("Non-Striker Name") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
+            // Whichever team bats first supplies the opener player-picker chips
+            val battingFirstIsA = (viewModel.tossDecision == TossDecision.BAT) ==
+                (viewModel.tossWinnerTeam == viewModel.teamAName)
+            val openingPlayerNames = if (battingFirstIsA) {
+                squadAPlayers.map { it.name }
+            } else {
+                squadBPlayers.map { it.name }
+            }
+            val bowlingPlayerNames = if (battingFirstIsA) {
+                squadBPlayers.map { it.name }
+            } else {
+                squadAPlayers.map { it.name }
             }
 
-            Text("Opening Bowler Name", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
+            Text("Opening Batsmen", style = MaterialTheme.typography.titleMedium)
+            PlayerPickerField(
+                label = "Striker Name",
+                value = viewModel.strikerName,
+                onValueChange = { viewModel.strikerName = it },
+                availablePlayerNames = openingPlayerNames.filter { it != viewModel.nonStrikerName }
+            )
+            Spacer(Modifier.height(4.dp))
+            PlayerPickerField(
+                label = "Non-Striker Name",
+                value = viewModel.nonStrikerName,
+                onValueChange = { viewModel.nonStrikerName = it },
+                availablePlayerNames = openingPlayerNames.filter { it != viewModel.strikerName }
+            )
+
+            Text("Opening Bowler", style = MaterialTheme.typography.titleMedium)
+            PlayerPickerField(
+                label = "Opening Bowler Name",
                 value = viewModel.openingBowlerName,
                 onValueChange = { viewModel.openingBowlerName = it },
-                label = { Text("Opening Bowler Name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                availablePlayerNames = bowlingPlayerNames
             )
 
             viewModel.errorMessage?.let { error ->

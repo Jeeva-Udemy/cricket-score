@@ -41,4 +41,18 @@ class CricketRepository(private val dao: CricketDao) {
         dao.deleteBallEvent(last.ballId)
         return last
     }
+
+    // Squads
+    suspend fun createSquad(squad: SquadEntity): Long = dao.insertSquad(squad)
+    suspend fun updateSquad(squad: SquadEntity) = dao.updateSquad(squad)
+    suspend fun deleteSquad(squadId: Long) = dao.deleteSquad(squadId)
+    fun observeAllSquads(): Flow<List<SquadEntity>> = dao.observeAllSquads()
+    suspend fun getSquad(squadId: Long): SquadEntity? = dao.getSquad(squadId)
+
+    // Players
+    suspend fun addPlayer(player: PlayerEntity): Long = dao.insertPlayer(player)
+    suspend fun updatePlayer(player: PlayerEntity) = dao.updatePlayer(player)
+    suspend fun deletePlayer(playerId: Long) = dao.deletePlayer(playerId)
+    fun observePlayersForSquad(squadId: Long): Flow<List<PlayerEntity>> = dao.observePlayersForSquad(squadId)
+    suspend fun getPlayersForSquad(squadId: Long): List<PlayerEntity> = dao.getPlayersForSquad(squadId)
 }
