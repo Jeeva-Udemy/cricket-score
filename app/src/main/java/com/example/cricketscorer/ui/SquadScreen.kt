@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -41,14 +43,18 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.data.PlayerEntity
 import com.example.cricketscorer.data.SquadEntity
 import com.example.cricketscorer.viewmodel.SquadViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +115,9 @@ fun SquadScreen(
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
+                    // Extra bottom room so an expanded squad card's "Add Player" field can be
+                    // scrolled clear above the keyboard instead of just peeking out from under it.
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 120.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f)
                 ) {
                     items(squads, key = { it.squadId }) { squad ->
@@ -202,6 +211,8 @@ private fun SquadCard(
     var newPlayerName by remember { mutableStateOf("") }
     var playerPendingRename by remember { mutableStateOf<PlayerEntity?>(null) }
     var playerPendingDelete by remember { mutableStateOf<PlayerEntity?>(null) }
+    val addPlayerBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val coroutineScope = rememberCoroutineScope()
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -269,7 +280,24 @@ private fun SquadCard(
                         onValueChange = { newPlayerName = it },
                         label = { Text("Add Player") },
                         singleLine = true,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .bringIntoViewRequester(addPlayerBringIntoViewRequester)
+                            .onFocusEvent { focusState ->
+                                if (focusState.isFocused) {
+                                    // Compose's automatic "scroll focused field into view" fires
+                                    // as soon as focus is requested, which is often before the
+                                    // IME has finished animating in — so it scrolls based on a
+                                    // keyboard height of zero and the field ends up peeking out
+                                    // from behind the keyboard (see reported screenshot). Wait
+                                    // for the IME animation to settle, then re-request so the
+                                    // field (and the Add button beside it) end up fully visible.
+                                    coroutineScope.launch {
+                                        delay(300)
+                                        addPlayerBringIntoViewRequester.bringIntoView()
+                                    }
+                                }
+                            }
                     )
                     Spacer(Modifier.width(8.dp))
                     IconButton(onClick = {

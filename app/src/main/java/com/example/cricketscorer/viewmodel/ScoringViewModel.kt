@@ -714,6 +714,23 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 selectedTabIndex = 1,
                 hasAutoSwitchedToSecondInnings = true
             )
+
+            // Explicitly resync the batter/bowler squad pickers for the 2nd innings right
+            // now, using the squad IDs we already know are correct (battingSquadId/
+            // bowlingSquadId are swapped for innings 2). Don't rely on the next emission
+            // from observeInningsForMatch's collector to do this: that collector reads
+            // _uiState.value.match?.currentInningsNumber to decide which innings is "live",
+            // and the DB write to the innings table above can trigger that collector to
+            // re-run before repository.updateMatch's own Flow has propagated the new
+            // currentInningsNumber into _uiState. When that race is lost, the collector
+            // resubscribes the pickers to the 1st innings' (unswapped) squads instead, and
+            // since nothing else re-triggers it, the pickers stay wrong for the whole 2nd
+            // innings until a ball is bowled. Setting the ids directly here closes that gap.
+            _lastObservedInningsNumber = secondInningsFromDb.inningsNumber
+            observedBattingSquadId = null
+            observedBowlingSquadId = null
+            observeSquadPlayers(secondInningsFromDb.battingSquadId, isBattingSquad = true)
+            observeSquadPlayers(secondInningsFromDb.bowlingSquadId, isBattingSquad = false)
         } else {
             val allInn = repository.getInningsForMatch(matchId)
             val firstInn = allInn.first { it.inningsNumber == 1 }
