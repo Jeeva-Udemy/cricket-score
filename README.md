@@ -36,6 +36,38 @@ Notes:
   you have an SSH key set up.
 - Every subsequent push to `main` will re-trigger the build automatically.
 
+## One-time setup: Google Sign-In for Backup & Resync
+The "Backup & Resync" feature signs the user into Google and reads/writes a single
+file in their Drive "App Data" folder. Google matches sign-in attempts against an
+**OAuth 2.0 Client ID** registered in Google Cloud Console for this exact
+`applicationId` + signing-certificate fingerprint — if that registration doesn't
+exist (or doesn't match), sign-in fails with `DEVELOPER_ERROR`, which is what you
+were seeing.
+
+This repo now signs every debug build (locally and in GitHub Actions) with a fixed,
+committed keystore at `app/debug.keystore`, so the fingerprint below is permanent —
+it will never change between builds or machines. You only need to register it once:
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/), create a
+   project (or pick an existing one).
+2. **APIs & Services → Library** → search "Google Drive API" → **Enable**.
+3. **APIs & Services → OAuth consent screen** → configure it (External is fine for
+   testing; add your own Google account under "Test users" if the app stays in
+   "Testing" mode).
+4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
+   - Application type: **Android**
+   - Package name: `com.example.cricketscorer`
+   - SHA-1 certificate fingerprint: `7F:12:D4:09:6A:EC:67:B6:9D:3D:24:9F:A2:90:3C:ED:D6:06:39:59`
+5. Save. No download or code change is needed afterwards — Android matches sign-in
+   attempts to this client ID purely by package name + SHA-1 at runtime.
+
+Reinstall the APK on your device after registering (an existing install can cache
+the old failed sign-in state), then try Backup & Resync again.
+
+⚠️ If you ever regenerate `app/debug.keystore` (e.g. `keytool -genkeypair ...`
+again), the SHA-1 above changes and you must update the OAuth client to match.
+Otherwise, leave the committed keystore file alone.
+
 ## How to open (optional — only if you later get Android Studio)
 1. Open the `CricketScorer/` folder in Android Studio (Koala or newer).
 2. Let Gradle sync (uses KSP for Room's annotation processing — no `kapt` needed).

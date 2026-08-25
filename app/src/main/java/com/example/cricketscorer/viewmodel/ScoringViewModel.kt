@@ -56,7 +56,12 @@ data class ScoringUiState(
     val hasAutoSwitchedToSecondInnings: Boolean = false,
     // Players from the saved squads linked to the live innings, for pick lists (req. #3)
     val battingSquadPlayerNames: List<String> = emptyList(),
-    val bowlingSquadPlayerNames: List<String> = emptyList()
+    val bowlingSquadPlayerNames: List<String> = emptyList(),
+    // Set to the innings number (currently always 2) right when that innings is created, so
+    // the Scoring screen can pop up a one-time "pick your openers" dialog instead of leaving
+    // the placeholder "Batsman 1 / Batsman 2 / Bowler 1" names in place until the user
+    // remembers to tap Edit. Cleared once the dialog has been confirmed/dismissed.
+    val openingPlayersPromptForInnings: Int? = null
 ) {
     val currentInnings: InningsEntity?
         get() {
@@ -447,6 +452,29 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
         }
     }
 
+    /**
+     * Confirms the "new innings" opener picker (req #2): sets striker, non-striker, and
+     * opening bowler for the innings that was just started, all in one write, and clears
+     * the one-time prompt flag.
+     */
+    fun confirmOpeningPlayers(strikerName: String, nonStrikerName: String, bowlerName: String) {
+        viewModelScope.launch {
+            val liveInn = fetchLiveInnings() ?: return@launch
+            val updated = liveInn.copy(
+                strikerName = strikerName.ifBlank { liveInn.strikerName },
+                nonStrikerName = nonStrikerName.ifBlank { liveInn.nonStrikerName },
+                currentBowlerName = bowlerName.ifBlank { liveInn.currentBowlerName }
+            )
+            repository.updateInnings(updated)
+            _uiState.value = _uiState.value.copy(openingPlayersPromptForInnings = null)
+        }
+    }
+
+    /** Dismisses the opener-picker dialog without changing anything (keeps the placeholders). */
+    fun dismissOpeningPlayersPrompt() {
+        _uiState.value = _uiState.value.copy(openingPlayersPromptForInnings = null)
+    }
+
     fun recordRuns(runs: Int) {
         applyDelivery(runs = runs, extraType = ExtraType.NONE, extraRuns = 0, wicketType = WicketType.NONE, isWicket = false)
     }
@@ -729,7 +757,11 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 match = updatedMatch,
                 allInnings = allInnings,
                 selectedTabIndex = 1,
-                hasAutoSwitchedToSecondInnings = true
+                hasAutoSwitchedToSecondInnings = true,
+                // req #2: prompt for the 2nd innings' opening batsmen + bowler as soon as it
+                // starts, instead of leaving the "Batsman 1 / Batsman 2 / Bowler 1" placeholders
+                // in place until the user remembers to tap Edit.
+                openingPlayersPromptForInnings = secondInningsFromDb.inningsNumber
             )
 
             // Explicitly resync the batter/bowler squad pickers for the 2nd innings right

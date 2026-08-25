@@ -16,6 +16,30 @@ android {
         versionName = "1.0"
     }
 
+    // Google Sign-In's DEVELOPER_ERROR (Backup & Resync, req #1) was caused by this: every
+    // debug build was signed with whatever throwaway ~/.android/debug.keystore happened to
+    // exist on that machine — and the GitHub Actions runner generates a brand new one on
+    // every single run, since nothing persists it between jobs. That means the app's SHA-1
+    // fingerprint (which Google Cloud Console's OAuth client is matched against) changed
+    // on every build, so no registered fingerprint could ever stay valid.
+    // Fix: sign every debug build with this one fixed, repo-committed keystore instead, so
+    // the SHA-1 is identical on every machine/CI run forever. See README.md for the
+    // one-time Google Cloud Console setup this still requires.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     buildFeatures {
         compose = true
     }

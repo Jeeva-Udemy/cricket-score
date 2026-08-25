@@ -6,16 +6,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -109,6 +107,7 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -128,14 +127,27 @@ fun HomeScreen(
                 HomeAction("Tournaments", Icons.Default.EmojiEvents, Color(0xFFDCF1F5), onTournaments)
             )
 
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.height(((actions.size + 1) / 2 * 110).dp)
-            ) {
-                items(actions) { action ->
-                    HomeActionCard(action = action)
+            // req #1: a plain chunked Column/Row grid instead of a height-constrained
+            // LazyVerticalGrid. The old fixed "110dp per row" height guess didn't always
+            // match the actual card height (which depends on screen width via aspectRatio),
+            // so on some devices the grid's real content could run taller than its forced
+            // height and clip into — or visually overlap — the Backup & Resync button right
+            // below it. Letting each row size itself from its fixed-height cards means the
+            // column height is always exactly right, and the whole screen is scrollable so
+            // nothing is ever cut off.
+            actions.chunked(2).forEach { rowActions ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    rowActions.forEach { action ->
+                        HomeActionCard(action = action, modifier = Modifier.weight(1f))
+                    }
+                    // Pad out an odd last row (e.g. Tournaments alone) so it doesn't stretch
+                    // to double width.
+                    if (rowActions.size == 1) {
+                        Spacer(Modifier.weight(1f))
+                    }
                 }
             }
 
@@ -184,11 +196,11 @@ fun HomeScreen(
 }
 
 @Composable
-private fun HomeActionCard(action: HomeAction) {
+private fun HomeActionCard(action: HomeAction, modifier: Modifier = Modifier) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(1.6f),
+            .height(100.dp),
         colors = CardDefaults.cardColors(containerColor = action.backgroundColor),
         onClick = action.onClick
     ) {
@@ -303,7 +315,7 @@ private fun BackupResyncDialog(
                         Text("Backup Now")
                     }
                     OutlinedButton(onClick = onResyncNow, enabled = !inProgress, modifier = Modifier.weight(1f)) {
-                        Text("Resync from Drive")
+                        Text("Resync")
                     }
                 }
             }

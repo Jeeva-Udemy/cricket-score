@@ -225,6 +225,22 @@ fun ScoringScreen(
         )
     }
 
+    // req #2: when the 2nd innings starts, prompt once for its opening batsmen + bowler
+    // instead of leaving the "Batsman 1 / Batsman 2 / Bowler 1" placeholders in place.
+    val openingPromptInningsNumber = state.openingPlayersPromptForInnings
+    if (openingPromptInningsNumber != null && openingPromptInningsNumber == innings.inningsNumber) {
+        SelectOpeningPlayersDialog(
+            battingTeam = innings.battingTeam,
+            bowlingTeam = innings.bowlingTeam,
+            availableBatsmen = state.battingSquadPlayerNames,
+            availableBowlers = state.bowlingSquadPlayerNames,
+            onDismiss = { viewModel.dismissOpeningPlayersPrompt() },
+            onConfirm = { strikerName, nonStrikerName, bowlerName ->
+                viewModel.confirmOpeningPlayers(strikerName, nonStrikerName, bowlerName)
+            }
+        )
+    }
+
     if (showCompleteInningsDialog) {
         AlertDialog(
             onDismissRequest = { showCompleteInningsDialog = false },
@@ -716,6 +732,74 @@ private fun EditBowlerDialog(
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * req #2: shown once, automatically, when a new innings starts — lets the user pick the
+ * opening striker, non-striker, and bowler for that innings in a single popup instead of
+ * having to remember to open "Edit Batsmen" / "Edit Bowler" separately. Skipping leaves the
+ * innings' placeholder names ("Batsman 1" etc.) in place, same as today.
+ */
+@Composable
+private fun SelectOpeningPlayersDialog(
+    battingTeam: String,
+    bowlingTeam: String,
+    availableBatsmen: List<String>,
+    availableBowlers: List<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (strikerName: String, nonStrikerName: String, bowlerName: String) -> Unit
+) {
+    var strikerName by remember { mutableStateOf("") }
+    var nonStrikerName by remember { mutableStateOf("") }
+    var bowlerName by remember { mutableStateOf("") }
+    val strikerFocusRequester = remember { FocusRequester() }
+    val nonStrikerFocusRequester = remember { FocusRequester() }
+    val bowlerFocusRequester = remember { FocusRequester() }
+    val startButtonFocusRequester = remember { FocusRequester() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New Innings: $battingTeam batting") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Pick the opening batsmen and the first bowler ($bowlingTeam) for this innings.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                PlayerPickerField(
+                    label = "Striker Name",
+                    value = strikerName,
+                    onValueChange = { strikerName = it },
+                    availablePlayerNames = availableBatsmen.filter { it != nonStrikerName },
+                    focusRequester = strikerFocusRequester,
+                    nextFocusRequester = nonStrikerFocusRequester
+                )
+                PlayerPickerField(
+                    label = "Non-Striker Name",
+                    value = nonStrikerName,
+                    onValueChange = { nonStrikerName = it },
+                    availablePlayerNames = availableBatsmen.filter { it != strikerName },
+                    focusRequester = nonStrikerFocusRequester,
+                    nextFocusRequester = bowlerFocusRequester
+                )
+                PlayerPickerField(
+                    label = "Opening Bowler Name",
+                    value = bowlerName,
+                    onValueChange = { bowlerName = it },
+                    availablePlayerNames = availableBowlers,
+                    focusRequester = bowlerFocusRequester,
+                    nextFocusRequester = startButtonFocusRequester
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(strikerName, nonStrikerName, bowlerName) },
+                modifier = Modifier.focusRequester(startButtonFocusRequester)
+            ) { Text("Start Innings") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Skip") } }
     )
 }
 
