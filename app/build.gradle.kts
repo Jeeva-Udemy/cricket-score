@@ -32,6 +32,24 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // The Google Drive API client libraries transitively pull in Apache HttpClient/HttpCore
+    // jars that duplicate META-INF metadata files, which breaks packaging even with the
+    // dependency-level excludes below. Drop the duplicated files explicitly.
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/license.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/notice.txt",
+                "META-INF/INDEX.LIST"
+            )
+        }
+    }
 }
 
 dependencies {
@@ -66,8 +84,13 @@ dependencies {
     implementation("com.google.api-client:google-api-client-android:2.2.0") {
         exclude(group = "org.apache.httpcomponents")
     }
-    implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0")
+    implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0") {
+        exclude(group = "org.apache.httpcomponents")
+    }
     implementation("com.google.http-client:google-http-client-gson:1.44.1") {
+        exclude(group = "org.apache.httpcomponents")
+    }
+    implementation("com.google.http-client:google-http-client:1.44.1") {
         exclude(group = "org.apache.httpcomponents")
     }
 
