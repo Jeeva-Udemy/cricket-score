@@ -49,6 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -637,6 +639,10 @@ private fun EditBatsmenDialog(
 ) {
     var strikerName by remember { mutableStateOf(currentStriker) }
     var nonStrikerName by remember { mutableStateOf(currentNonStriker) }
+    // req #4: Striker -> Non-Striker -> highlight Save button, keyboard closes
+    val strikerFocusRequester = remember { FocusRequester() }
+    val nonStrikerFocusRequester = remember { FocusRequester() }
+    val saveButtonFocusRequester = remember { FocusRequester() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -647,18 +653,25 @@ private fun EditBatsmenDialog(
                     label = "Striker Name",
                     value = strikerName,
                     onValueChange = { strikerName = it },
-                    availablePlayerNames = availablePlayers.filter { it != nonStrikerName }
+                    availablePlayerNames = availablePlayers.filter { it != nonStrikerName },
+                    focusRequester = strikerFocusRequester,
+                    nextFocusRequester = nonStrikerFocusRequester
                 )
                 PlayerPickerField(
                     label = "Non-Striker Name",
                     value = nonStrikerName,
                     onValueChange = { nonStrikerName = it },
-                    availablePlayerNames = availablePlayers.filter { it != strikerName }
+                    availablePlayerNames = availablePlayers.filter { it != strikerName },
+                    focusRequester = nonStrikerFocusRequester,
+                    nextFocusRequester = saveButtonFocusRequester
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(strikerName, nonStrikerName) }) {
+            TextButton(
+                onClick = { onConfirm(strikerName, nonStrikerName) },
+                modifier = Modifier.focusRequester(saveButtonFocusRequester)
+            ) {
                 Text("Save")
             }
         },
@@ -675,6 +688,9 @@ private fun EditBowlerDialog(
     onConfirm: (String) -> Unit
 ) {
     var bowlerName by remember { mutableStateOf(currentBowler) }
+    // req #4: selecting a bowler highlights Save and closes the keyboard
+    val bowlerFocusRequester = remember { FocusRequester() }
+    val saveButtonFocusRequester = remember { FocusRequester() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -686,11 +702,16 @@ private fun EditBowlerDialog(
                 label = "Bowler Name",
                 value = bowlerName,
                 onValueChange = { bowlerName = it },
-                availablePlayerNames = existingBowlers
+                availablePlayerNames = existingBowlers,
+                focusRequester = bowlerFocusRequester,
+                nextFocusRequester = saveButtonFocusRequester
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(bowlerName) }) { Text("Save") }
+            TextButton(
+                onClick = { onConfirm(bowlerName) },
+                modifier = Modifier.focusRequester(saveButtonFocusRequester)
+            ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -709,6 +730,9 @@ private fun WicketDialog(
     var runsCompleted by remember { mutableStateOf(0) }
     var newBatsmanName by remember { mutableStateOf(nextBatsmanDefault) }
     var dismissedEnd by remember { mutableStateOf(DismissedEnd.STRIKER) }
+    // req #4: selecting the incoming batsman highlights Confirm and closes the keyboard
+    val incomingBatsmanFocusRequester = remember { FocusRequester() }
+    val confirmButtonFocusRequester = remember { FocusRequester() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -761,14 +785,17 @@ private fun WicketDialog(
                     label = "Incoming Batsman Name",
                     value = newBatsmanName,
                     onValueChange = { newBatsmanName = it },
-                    availablePlayerNames = availableIncomingBatsmen
+                    availablePlayerNames = availableIncomingBatsmen,
+                    focusRequester = incomingBatsmanFocusRequester,
+                    nextFocusRequester = confirmButtonFocusRequester
                 )
             }
         },
         confirmButton = {
             TextButton(
                 onClick = { selectedType?.let { onConfirm(it, runsCompleted, newBatsmanName, dismissedEnd) } },
-                enabled = selectedType != null
+                enabled = selectedType != null,
+                modifier = Modifier.focusRequester(confirmButtonFocusRequester)
             ) { Text("Confirm") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

@@ -55,4 +55,40 @@ class CricketRepository(private val dao: CricketDao) {
     suspend fun deletePlayer(playerId: Long) = dao.deletePlayer(playerId)
     fun observePlayersForSquad(squadId: Long): Flow<List<PlayerEntity>> = dao.observePlayersForSquad(squadId)
     suspend fun getPlayersForSquad(squadId: Long): List<PlayerEntity> = dao.getPlayersForSquad(squadId)
+
+    // ---------- Backup / Resync (Google Drive) ----------
+
+    /** Snapshot of every table, used to build the JSON backup uploaded to Drive. */
+    suspend fun getFullBackupSnapshot(): BackupSnapshot = BackupSnapshot(
+        matches = dao.getAllMatches(),
+        innings = dao.getAllInnings(),
+        ballEvents = dao.getAllBallEvents(),
+        squads = dao.getAllSquads(),
+        players = dao.getAllPlayers()
+    )
+
+    /**
+     * Wipes all local data and replaces it with the contents of [snapshot], preserving the
+     * original row ids so foreign keys (innings -> match, players -> squad, etc.) stay valid.
+     * Used only when the user taps "Resync from Drive".
+     */
+    suspend fun restoreFromBackup(snapshot: BackupSnapshot) {
+        dao.clearAllMatches() // cascades: innings, ball_events
+        dao.clearAllSquads()  // cascades: players
+
+        snapshot.squads.forEach { dao.restoreSquad(it) }
+        snapshot.players.forEach { dao.restorePlayer(it) }
+        snapshot.matches.forEach { dao.restoreMatch(it) }
+        snapshot.innings.forEach { dao.restoreInnings(it) }
+        snapshot.ballEvents.forEach { dao.restoreBallEvent(it) }
+    }
 }
+
+/** Full point-in-time export of everything the app stores locally. */
+data class BackupSnapshot(
+    val matches: List<MatchEntity>,
+    val innings: List<InningsEntity>,
+    val ballEvents: List<BallEventEntity>,
+    val squads: List<SquadEntity>,
+    val players: List<PlayerEntity>
+)

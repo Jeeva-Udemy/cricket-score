@@ -487,6 +487,14 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
         }
     }
 
+    /**
+     * Undo restores the innings from the pre-ball snapshot stored on the last
+     * [BallEventEntity] rather than reversing individual deltas. This guarantees the
+     * striker/non-striker (names AND batsman numbers) and "next batsman" counter all
+     * go back to exactly what they were before that ball — including on a wicket,
+     * so a run-out recorded against the wrong end (or any other mis-tap) is fixed by
+     * a single Undo with no manual "Edit Batsmen" cleanup required afterwards.
+     */
     fun undoLastBall() {
         viewModelScope.launch {
             val match = repository.getMatch(matchId) ?: return@launch
@@ -494,45 +502,31 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
             val inningsId = liveInn.inningsId
             val lastBall = repository.undoLastBall(inningsId) ?: return@launch
 
-            if (match.isCompleted || liveInn.isCompleted) {
-                val reopenedInnings = liveInn.copy(isCompleted = false)
-                repository.updateInnings(reopenedInnings)
-                val reopenedMatch = match.copy(isCompleted = false, resultSummary = null)
-                repository.updateMatch(reopenedMatch)
+            if (match.isCompleted) {
+                repository.updateMatch(match.copy(isCompleted = false, resultSummary = null))
             }
 
-            val isLegalBall = lastBall.extraType != ExtraType.WIDE &&
-                    lastBall.extraType != ExtraType.NO_BALL &&
-                    lastBall.extraType != ExtraType.PENALTY
-            val totalRunsFromBall = lastBall.runsScored + lastBall.extraRuns
-
-            // Re-fetch innings after possible reopen so we have latest state
+            // Re-fetch innings after the possible match reopen so we have the latest state,
+            // then restore every mutable field straight from the ball's pre-ball snapshot.
             val freshInn = fetchLiveInnings() ?: return@launch
-
-            var newBallsThisOver = freshInn.ballsThisOver
-            var newCompletedOvers = freshInn.completedOvers
-            if (isLegalBall) {
-                if (newBallsThisOver == 0) {
-                    newCompletedOvers = (newCompletedOvers - 1).coerceAtLeast(0)
-                    newBallsThisOver = 5
-                } else {
-                    newBallsThisOver -= 1
-                }
-            }
-
-            val updated = freshInn.copy(
-                totalRuns = (freshInn.totalRuns - totalRunsFromBall).coerceAtLeast(0),
-                wickets = if (lastBall.isWicket) (freshInn.wickets - 1).coerceAtLeast(0) else freshInn.wickets,
-                completedOvers = newCompletedOvers,
-                ballsThisOver = newBallsThisOver,
-                wideRuns = if (lastBall.extraType == ExtraType.WIDE) (freshInn.wideRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.wideRuns,
-                noBallRuns = if (lastBall.extraType == ExtraType.NO_BALL) (freshInn.noBallRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.noBallRuns,
-                byeRuns = if (lastBall.extraType == ExtraType.BYE) (freshInn.byeRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.byeRuns,
-                legByeRuns = if (lastBall.extraType == ExtraType.LEG_BYE) (freshInn.legByeRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.legByeRuns,
-                penaltyRuns = if (lastBall.extraType == ExtraType.PENALTY) (freshInn.penaltyRuns - totalRunsFromBall).coerceAtLeast(0) else freshInn.penaltyRuns,
-                isCompleted = false
+            val restored = freshInn.copy(
+                totalRuns = lastBall.preTotalRuns,
+                wickets = lastBall.preWickets,
+                completedOvers = lastBall.preCompletedOvers,
+                ballsThisOver = lastBall.preBallsThisOver,
+                wideRuns = lastBall.preWideRuns,
+                noBallRuns = lastBall.preNoBallRuns,
+                byeRuns = lastBall.preByeRuns,
+                legByeRuns = lastBall.preLegByeRuns,
+                penaltyRuns = lastBall.prePenaltyRuns,
+                strikerBatsmanNumber = lastBall.preStrikerBatsmanNumber,
+                nonStrikerBatsmanNumber = lastBall.preNonStrikerBatsmanNumber,
+                strikerName = lastBall.preStrikerName,
+                nonStrikerName = lastBall.preNonStrikerName,
+                nextBatsmanNumber = lastBall.preNextBatsmanNumber,
+                isCompleted = lastBall.preIsCompleted
             )
-            repository.updateInnings(updated)
+            repository.updateInnings(restored)
         }
     }
 
@@ -568,7 +562,8 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 DismissedEnd.NON_STRIKER -> innings.nonStrikerName
             }
 
-            // 1. Audit log
+            // 1. Audit log — includes a full pre-ball snapshot so Undo can restore the
+            // innings exactly as it was, batsmen included (see BallEventEntity).
             val ballEvent = BallEventEntity(
                 inningsId = inningsId,
                 overNumber = innings.completedOvers,
@@ -581,6 +576,21 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 strikerBatsmanNumber = innings.strikerBatsmanNumber,
                 strikerName = innings.strikerName,
                 dismissedPlayerName = dismissedName,
+                preTotalRuns = innings.totalRuns,
+                preWickets = innings.wickets,
+                preCompletedOvers = innings.completedOvers,
+                preBallsThisOver = innings.ballsThisOver,
+                preWideRuns = innings.wideRuns,
+                preNoBallRuns = innings.noBallRuns,
+                preByeRuns = innings.byeRuns,
+                preLegByeRuns = innings.legByeRuns,
+                prePenaltyRuns = innings.penaltyRuns,
+                preStrikerBatsmanNumber = innings.strikerBatsmanNumber,
+                preNonStrikerBatsmanNumber = innings.nonStrikerBatsmanNumber,
+                preStrikerName = innings.strikerName,
+                preNonStrikerName = innings.nonStrikerName,
+                preNextBatsmanNumber = innings.nextBatsmanNumber,
+                preIsCompleted = innings.isCompleted,
                 bowlerName = innings.currentBowlerName
             )
             repository.addBallEvent(ballEvent)

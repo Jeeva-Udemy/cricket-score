@@ -2,6 +2,7 @@ package com.example.cricketscorer.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
@@ -26,8 +27,15 @@ interface CricketDao {
     @Query("SELECT * FROM matches ORDER BY createdAt DESC")
     fun observeAllMatches(): Flow<List<MatchEntity>>
 
+    @Query("SELECT * FROM matches ORDER BY createdAt DESC")
+    suspend fun getAllMatches(): List<MatchEntity>
+
     @Query("DELETE FROM matches WHERE matchId IN (:matchIds)")
     suspend fun deleteMatches(matchIds: List<Long>)
+
+    /** Deletes every match (and, via cascade, every innings/ball event). Used only by Drive Resync. */
+    @Query("DELETE FROM matches")
+    suspend fun clearAllMatches()
 
     // ---------- Innings ----------
 
@@ -49,6 +57,9 @@ interface CricketDao {
     @Query("SELECT * FROM innings WHERE matchId = :matchId ORDER BY inningsNumber ASC")
     fun observeInningsForMatch(matchId: Long): Flow<List<InningsEntity>>
 
+    @Query("SELECT * FROM innings")
+    suspend fun getAllInnings(): List<InningsEntity>
+
     @Query("DELETE FROM innings WHERE matchId IN (:matchIds)")
     suspend fun deleteInningsForMatches(matchIds: List<Long>)
 
@@ -59,6 +70,9 @@ interface CricketDao {
 
     @Query("SELECT * FROM ball_events WHERE inningsId = :inningsId ORDER BY ballId ASC")
     fun observeBallEvents(inningsId: Long): Flow<List<BallEventEntity>>
+
+    @Query("SELECT * FROM ball_events")
+    suspend fun getAllBallEvents(): List<BallEventEntity>
 
     @Query("SELECT * FROM ball_events WHERE inningsId = :inningsId ORDER BY ballId DESC LIMIT 1")
     suspend fun getLastBallEvent(inningsId: Long): BallEventEntity?
@@ -83,8 +97,15 @@ interface CricketDao {
     @Query("SELECT * FROM squads ORDER BY teamName ASC")
     fun observeAllSquads(): Flow<List<SquadEntity>>
 
+    @Query("SELECT * FROM squads ORDER BY teamName ASC")
+    suspend fun getAllSquads(): List<SquadEntity>
+
     @Query("SELECT * FROM squads WHERE squadId = :squadId")
     suspend fun getSquad(squadId: Long): SquadEntity?
+
+    /** Deletes every squad (and, via cascade, every player). Used only by Drive Resync. */
+    @Query("DELETE FROM squads")
+    suspend fun clearAllSquads()
 
     // ---------- Players ----------
 
@@ -102,4 +123,27 @@ interface CricketDao {
 
     @Query("SELECT * FROM players WHERE squadId = :squadId ORDER BY createdAt ASC")
     suspend fun getPlayersForSquad(squadId: Long): List<PlayerEntity>
+
+    @Query("SELECT * FROM players")
+    suspend fun getAllPlayers(): List<PlayerEntity>
+
+    // ---------- Restore (Google Drive Resync) ----------
+    // These re-insert rows with their ORIGINAL primary keys (REPLACE on conflict) so that
+    // foreign keys between matches/innings/ball_events and squads/players stay intact when
+    // restoring a full backup onto a fresh install.
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreMatch(match: MatchEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreInnings(innings: InningsEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreBallEvent(ballEvent: BallEventEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreSquad(squad: SquadEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restorePlayer(player: PlayerEntity)
 }

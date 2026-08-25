@@ -14,6 +14,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.cricketscorer.ui.ComingSoonScreen
 import com.example.cricketscorer.ui.HomeScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
 import com.example.cricketscorer.ui.ScoringScreen
@@ -29,7 +30,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val app = application as CricketApplication
-        val factory = ViewModelFactory(app.repository)
+        val factory = ViewModelFactory(app.repository, applicationContext)
 
         setContent {
             MaterialTheme {
@@ -53,8 +54,23 @@ fun CricketNavHost(factory: ViewModelFactory) {
                 viewModel = homeViewModel,
                 onStartNewMatch = { navController.navigate("setup") },
                 onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") },
-                onManageSquads = { navController.navigate("squads") }
+                onManageSquads = { navController.navigate("squads") },
+                onPlayerStats = { navController.navigate("playerStats") },
+                onRankings = { navController.navigate("rankings") },
+                onTournaments = { navController.navigate("tournaments") }
             )
+        }
+
+        composable("playerStats") {
+            ComingSoonScreen(title = "Player Stats", onNavigateBack = { navController.popBackStack() })
+        }
+
+        composable("rankings") {
+            ComingSoonScreen(title = "Rankings", onNavigateBack = { navController.popBackStack() })
+        }
+
+        composable("tournaments") {
+            ComingSoonScreen(title = "Tournaments", onNavigateBack = { navController.popBackStack() })
         }
 
         composable("squads") {

@@ -26,8 +26,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.model.TossDecision
@@ -44,6 +48,12 @@ fun MatchSetupScreen(
     val squads by viewModel.squads.collectAsState()
     val squadAPlayers by viewModel.squadAPlayers.collectAsState()
     val squadBPlayers by viewModel.squadBPlayers.collectAsState()
+
+    // req #4: Striker -> Non-Striker -> Opening Bowler -> Start Match button
+    val strikerFocusRequester = remember { FocusRequester() }
+    val nonStrikerFocusRequester = remember { FocusRequester() }
+    val bowlerFocusRequester = remember { FocusRequester() }
+    val startButtonFocusRequester = remember { FocusRequester() }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -77,9 +87,10 @@ fun MatchSetupScreen(
             )
             OutlinedTextField(
                 value = viewModel.teamAName,
-                onValueChange = { viewModel.teamAName = it },
+                onValueChange = { viewModel.teamAName = capitalizeFirstLetter(it) },
                 label = { Text("Team A Name") },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -92,9 +103,10 @@ fun MatchSetupScreen(
             )
             OutlinedTextField(
                 value = viewModel.teamBName,
-                onValueChange = { viewModel.teamBName = it },
+                onValueChange = { viewModel.teamBName = capitalizeFirstLetter(it) },
                 label = { Text("Team B Name") },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -173,14 +185,18 @@ fun MatchSetupScreen(
                 label = "Striker Name",
                 value = viewModel.strikerName,
                 onValueChange = { viewModel.strikerName = it },
-                availablePlayerNames = openingPlayerNames.filter { it != viewModel.nonStrikerName }
+                availablePlayerNames = openingPlayerNames.filter { it != viewModel.nonStrikerName },
+                focusRequester = strikerFocusRequester,
+                nextFocusRequester = nonStrikerFocusRequester
             )
             Spacer(Modifier.height(4.dp))
             PlayerPickerField(
                 label = "Non-Striker Name",
                 value = viewModel.nonStrikerName,
                 onValueChange = { viewModel.nonStrikerName = it },
-                availablePlayerNames = openingPlayerNames.filter { it != viewModel.strikerName }
+                availablePlayerNames = openingPlayerNames.filter { it != viewModel.strikerName },
+                focusRequester = nonStrikerFocusRequester,
+                nextFocusRequester = bowlerFocusRequester
             )
 
             Text("Opening Bowler", style = MaterialTheme.typography.titleMedium)
@@ -188,7 +204,11 @@ fun MatchSetupScreen(
                 label = "Opening Bowler Name",
                 value = viewModel.openingBowlerName,
                 onValueChange = { viewModel.openingBowlerName = it },
-                availablePlayerNames = bowlingPlayerNames
+                availablePlayerNames = bowlingPlayerNames,
+                focusRequester = bowlerFocusRequester,
+                // Last field: selecting a bowler moves focus straight to (and highlights)
+                // the Start Match button and dismisses the keyboard (req #4).
+                nextFocusRequester = startButtonFocusRequester
             )
 
             viewModel.errorMessage?.let { error ->
@@ -202,6 +222,7 @@ fun MatchSetupScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.CenterHorizontally)
+                    .focusRequester(startButtonFocusRequester)
             ) {
                 Text("Start Match")
             }

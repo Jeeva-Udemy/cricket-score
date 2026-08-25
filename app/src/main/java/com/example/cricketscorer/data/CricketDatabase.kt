@@ -14,7 +14,7 @@ import androidx.room.TypeConverters
         SquadEntity::class,
         PlayerEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
