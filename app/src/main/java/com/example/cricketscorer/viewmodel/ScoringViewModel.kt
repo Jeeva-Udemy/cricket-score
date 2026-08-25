@@ -359,10 +359,17 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
             launch {
                 repository.observeMatch(matchId).collect { match ->
                     if (match == null) return@collect
-                    val resultMsg = match.resultSummary ?: _uiState.value.matchCompleteMessage
+                    // req #4: mirror resultSummary directly (no "sticky" fallback to the
+                    // previous message). The old fallback kept showing the "Match Complete"
+                    // card — hiding every scoring button — even after undoLastBall() cleared
+                    // resultSummary and reopened the match, because it always preferred
+                    // whatever matchCompleteMessage used to be over the new null. That forced
+                    // the user back to the home screen and into the match again just to get
+                    // the run buttons back. Tying it straight to resultSummary means the
+                    // scoring UI reappears the instant the match is reopened.
                     _uiState.value = _uiState.value.copy(
                         match = match,
-                        matchCompleteMessage = resultMsg,
+                        matchCompleteMessage = match.resultSummary,
                         isLoading = false
                     )
                 }

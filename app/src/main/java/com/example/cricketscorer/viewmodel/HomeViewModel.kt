@@ -9,6 +9,8 @@ import com.example.cricketscorer.backup.DriveBackupManager
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.MatchEntity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
+import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -117,7 +119,7 @@ class HomeViewModel(
     fun onSignInResult(data: Intent?) {
         val task = GoogleSignIn.getSignedInAccountFromIntent(data)
         try {
-            task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+            task.getResult(ApiException::class.java)
             val action = pendingAction
             pendingAction = null
             if (action != null) {
@@ -125,9 +127,40 @@ class HomeViewModel(
             } else {
                 _backupState.value = BackupUiState.Idle
             }
+        } catch (e: ApiException) {
+            pendingAction = null
+            _backupState.value = BackupUiState.Error(describeSignInFailure(e))
         } catch (e: Exception) {
             pendingAction = null
             _backupState.value = BackupUiState.Error("Google sign-in was cancelled or failed.")
+        }
+    }
+
+    /**
+     * Turns a Google Sign-In [ApiException] into a message that actually says what went
+     * wrong, instead of the old one-size-fits-all "cancelled or failed" text that made this
+     * impossible to diagnose. In particular, status code 10 (DEVELOPER_ERROR) — which is
+     * what you get when the app's OAuth client / SHA-1 fingerprint isn't registered for this
+     * package in Google Cloud Console — looked identical to the user just backing out of the
+     * account picker. Those are very different problems and need very different fixes.
+     */
+    private fun describeSignInFailure(e: ApiException): String {
+        val codeName = GoogleSignInStatusCodes.getStatusCodeString(e.statusCode)
+        return when (e.statusCode) {
+            GoogleSignInStatusCodes.SIGN_IN_CANCELLED ->
+                "Sign-in was cancelled."
+            GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS ->
+                "A sign-in is already in progress. Please wait and try again."
+            GoogleSignInStatusCodes.SIGN_IN_FAILED ->
+                "Sign-in failed. Check your connection and try again."
+            10 -> // DEVELOPER_ERROR — not exposed as a named constant on GoogleSignInStatusCodes
+                "Sign-in is misconfigured for this app build (DEVELOPER_ERROR). This means the " +
+                    "OAuth client / SHA-1 fingerprint for this package isn't registered in " +
+                    "Google Cloud Console yet — ask whoever manages the project to add it."
+            7 -> // NETWORK_ERROR
+                "No network connection. Check your connection and try again."
+            else ->
+                "Google sign-in failed ($codeName, code ${e.statusCode})."
         }
     }
 

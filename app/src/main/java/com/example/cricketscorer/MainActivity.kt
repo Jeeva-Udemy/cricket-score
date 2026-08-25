@@ -16,6 +16,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.cricketscorer.ui.ComingSoonScreen
 import com.example.cricketscorer.ui.HomeScreen
+import com.example.cricketscorer.ui.MatchHistoryScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
 import com.example.cricketscorer.ui.ScoringScreen
 import com.example.cricketscorer.ui.SquadScreen
@@ -57,7 +58,17 @@ fun CricketNavHost(factory: ViewModelFactory) {
                 onManageSquads = { navController.navigate("squads") },
                 onPlayerStats = { navController.navigate("playerStats") },
                 onRankings = { navController.navigate("rankings") },
-                onTournaments = { navController.navigate("tournaments") }
+                onTournaments = { navController.navigate("tournaments") },
+                onMatchHistory = { navController.navigate("matchHistory") }
+            )
+        }
+
+        composable("matchHistory") {
+            val homeViewModel: HomeViewModel = viewModel(factory = factory)
+            MatchHistoryScreen(
+                viewModel = homeViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") }
             )
         }
 
