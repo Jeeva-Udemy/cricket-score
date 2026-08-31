@@ -475,6 +475,20 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
         _uiState.value = _uiState.value.copy(openingPlayersPromptForInnings = null)
     }
 
+    /**
+     * Manually overrides the target for the live (2nd) innings. Useful when the first
+     * innings' score wasn't entered ball-by-ball in the app, so the auto-computed
+     * "1st innings total + 1" target never got set correctly — the team already knows
+     * what they need to chase and can enter it directly.
+     */
+    fun setManualTarget(target: Int) {
+        viewModelScope.launch {
+            val liveInn = fetchLiveInnings() ?: return@launch
+            if (liveInn.isCompleted) return@launch
+            repository.updateInnings(liveInn.copy(target = target))
+        }
+    }
+
     fun recordRuns(runs: Int) {
         applyDelivery(runs = runs, extraType = ExtraType.NONE, extraRuns = 0, wicketType = WicketType.NONE, isWicket = false)
     }
@@ -508,15 +522,24 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
      * Manually ends the current (live) innings right now, regardless of overs/wickets —
      * for local games where the full XI is never on the field so "all out" may never
      * naturally trigger, or the side simply wants to declare / stop early.
+     *
+     * [manualRuns] / [manualWickets], when provided, override the app-tracked score with
+     * the actual final score before completing — for games where the balls weren't all
+     * entered live in the app. Whatever score is saved here is what decides the match
+     * result (and, for the 1st innings, what the 2nd innings' target is computed from).
      */
-    fun completeInningsManually() {
+    fun completeInningsManually(manualRuns: Int? = null, manualWickets: Int? = null) {
         viewModelScope.launch {
             val match = repository.getMatch(matchId) ?: return@launch
             val allInningsInDb = repository.getInningsForMatch(matchId)
             val innings = allInningsInDb.firstOrNull { it.inningsNumber == match.currentInningsNumber } ?: return@launch
             if (innings.isCompleted || match.isCompleted) return@launch
 
-            val completedInnings = innings.copy(isCompleted = true)
+            val completedInnings = innings.copy(
+                totalRuns = manualRuns ?: innings.totalRuns,
+                wickets = manualWickets ?: innings.wickets,
+                isCompleted = true
+            )
             repository.updateInnings(completedInnings)
             finishInnings(match, completedInnings)
         }

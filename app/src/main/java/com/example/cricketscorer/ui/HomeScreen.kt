@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudSync
@@ -32,7 +31,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -47,7 +45,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.viewmodel.BackupUiState
 import com.example.cricketscorer.viewmodel.HomeViewModel
 
@@ -161,18 +158,9 @@ fun HomeScreen(
                 Text("Backup & Resync")
             }
 
-            if (inProgressMatches.isNotEmpty()) {
-                Text(
-                    text = "In Progress Matches",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    inProgressMatches.forEach { match ->
-                        InProgressMatchCard(match = match, onClick = { onOpenMatch(match.matchId) })
-                    }
-                }
-            }
+            // req: the "In Progress Matches" list used to be duplicated here and on the
+            // Match History screen. It's now shown only on Match History (which already
+            // marks each match's status), so it isn't removed here and repeated there.
         }
     }
 
@@ -220,49 +208,6 @@ private fun HomeActionCard(action: HomeAction, modifier: Modifier = Modifier) {
                 action.label,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
-
-@Composable
-private fun InProgressMatchCard(match: MatchEntity, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick
-    ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "MATCH",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Text(
-                        "In Progress",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
-            }
-            Text(
-                "${match.teamAName} vs ${match.teamBName}",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                "Match started",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

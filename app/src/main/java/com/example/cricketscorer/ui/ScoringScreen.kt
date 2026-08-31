@@ -80,7 +80,11 @@ fun ScoringScreen(
     var showPenaltyDialog by remember { mutableStateOf(false) }
     var showEditBatsmenDialog by remember { mutableStateOf(false) }
     var showEditBowlerDialog by remember { mutableStateOf(false) }
+    // True when the bowler dialog was opened automatically after an over (mandatory,
+    // no Cancel); false when opened via the manual "Change Bowler" button (optional).
+    var isBowlerChangeMandatory by remember { mutableStateOf(false) }
     var showCompleteInningsDialog by remember { mutableStateOf(false) }
+    var showSetTargetDialog by remember { mutableStateOf(false) }
 
     if (state.isLoading || state.match == null || state.currentInnings == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -95,6 +99,7 @@ fun ScoringScreen(
     // ---- Auto Bowler Selection Dialog Prompt After Every Over ----
     LaunchedEffect(innings.completedOvers) {
         if (innings.completedOvers > 0 && innings.ballsThisOver == 0 && state.isCurrentInningsLive) {
+            isBowlerChangeMandatory = true
             showEditBowlerDialog = true
         }
     }
@@ -153,11 +158,12 @@ fun ScoringScreen(
                 viewModel = viewModel,
                 state = state,
                 onEditBatsmen = { showEditBatsmenDialog = true },
-                onEditBowler = { showEditBowlerDialog = true },
+                onEditBowler = { isBowlerChangeMandatory = false; showEditBowlerDialog = true },
                 onWicketClick = { showWicketDialog = true },
                 onExtraClick = { showExtraDialogFor = it },
                 onPenaltyClick = { showPenaltyDialog = true },
-                onCompleteInningsClick = { showCompleteInningsDialog = true }
+                onCompleteInningsClick = { showCompleteInningsDialog = true },
+                onSetTargetClick = { showSetTargetDialog = true }
             )
             1 -> ScorecardTabContent(state = state)
             2 -> OversTabContent(state = state)
@@ -201,8 +207,8 @@ fun ScoringScreen(
 
     if (showEditBowlerDialog) {
         EditBowlerDialog(
-            currentBowler = innings.currentBowlerName,
             existingBowlers = state.existingBowlers,
+            mandatory = isBowlerChangeMandatory,
             onDismiss = { showEditBowlerDialog = false },
             onConfirm = { bName ->
                 viewModel.updateBowlerName(bName)
@@ -215,7 +221,6 @@ fun ScoringScreen(
         WicketDialog(
             strikerName = innings.strikerName,
             nonStrikerName = innings.nonStrikerName,
-            nextBatsmanDefault = "Batsman ${innings.nextBatsmanNumber}",
             availableIncomingBatsmen = state.availableIncomingBatsmen,
             onDismiss = { showWicketDialog = false },
             onConfirm = { wicketType, runsCompleted, newBatsmanName, dismissedEnd ->
@@ -234,7 +239,6 @@ fun ScoringScreen(
             bowlingTeam = innings.bowlingTeam,
             availableBatsmen = state.battingSquadPlayerNames,
             availableBowlers = state.bowlingSquadPlayerNames,
-            onDismiss = { viewModel.dismissOpeningPlayersPrompt() },
             onConfirm = { strikerName, nonStrikerName, bowlerName ->
                 viewModel.confirmOpeningPlayers(strikerName, nonStrikerName, bowlerName)
             }
@@ -242,24 +246,25 @@ fun ScoringScreen(
     }
 
     if (showCompleteInningsDialog) {
-        AlertDialog(
-            onDismissRequest = { showCompleteInningsDialog = false },
-            title = { Text("Complete Innings?") },
-            text = {
-                Text(
-                    "End this innings now with the current score of ${innings.totalRuns}/${innings.wickets}? " +
-                        "Use this when your side doesn't have a full XI on the day and everyone available is out, " +
-                        "or you simply want to move on."
-                )
-            },
-            confirmButton = {
-                Button(onClick = {
-                    viewModel.completeInningsManually()
-                    showCompleteInningsDialog = false
-                }) { Text("Complete Innings") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCompleteInningsDialog = false }) { Text("Cancel") }
+        CompleteInningsDialog(
+            currentRuns = innings.totalRuns,
+            currentWickets = innings.wickets,
+            maxWickets = (state.match?.playersPerTeam ?: 11) - 1,
+            onDismiss = { showCompleteInningsDialog = false },
+            onConfirm = { runs, wickets ->
+                viewModel.completeInningsManually(runs, wickets)
+                showCompleteInningsDialog = false
+            }
+        )
+    }
+
+    if (showSetTargetDialog) {
+        SetTargetDialog(
+            currentTarget = innings.target,
+            onDismiss = { showSetTargetDialog = false },
+            onConfirm = { newTarget ->
+                viewModel.setManualTarget(newTarget)
+                showSetTargetDialog = false
             }
         )
     }
@@ -274,7 +279,8 @@ private fun LiveScoreTabContent(
     onWicketClick: () -> Unit,
     onExtraClick: (ExtraType) -> Unit,
     onPenaltyClick: () -> Unit,
-    onCompleteInningsClick: () -> Unit
+    onCompleteInningsClick: () -> Unit,
+    onSetTargetClick: () -> Unit
 ) {
     val match = state.match!!
     val innings = state.currentInnings!!
@@ -310,6 +316,13 @@ private fun LiveScoreTabContent(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
+                    }
+                    // req: lets the chasing team's target be entered/corrected by hand
+                    // when the 1st innings' score wasn't tracked ball-by-ball in the app.
+                    if (innings.inningsNumber == 2 && state.isCurrentInningsLive) {
+                        TextButton(onClick = onSetTargetClick, contentPadding = PaddingValues(0.dp)) {
+                            Text("Set Target Manually", fontSize = 11.sp)
+                        }
                     }
                 }
             }
@@ -647,6 +660,127 @@ private fun PenaltyRunsDialog(
     )
 }
 
+/**
+ * req: lets the user end an innings with a final score they type in by hand, for games
+ * where every ball wasn't entered live in the app. Pre-fills whatever the app tracked so
+ * far, but both fields are freely editable — whatever is saved here is what the match
+ * result (and, for the 1st innings, the 2nd innings' target) is based on.
+ */
+@Composable
+private fun CompleteInningsDialog(
+    currentRuns: Int,
+    currentWickets: Int,
+    maxWickets: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (runs: Int, wickets: Int) -> Unit
+) {
+    var runsText by remember { mutableStateOf(currentRuns.toString()) }
+    var wicketsText by remember { mutableStateOf(currentWickets.toString()) }
+
+    val runs = runsText.toIntOrNull()
+    val wickets = wicketsText.toIntOrNull()
+    val isValid = runs != null && runs >= 0 && wickets != null && wickets in 0..maxWickets
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Complete Innings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Confirm the final score for this innings. If the other team's score " +
+                        "wasn't entered ball-by-ball in the app, update the runs/wickets below " +
+                        "to the actual final score — this is what decides the match result.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = runsText,
+                        onValueChange = { if (it.all { c -> c.isDigit() }) runsText = it },
+                        label = { Text("Total Runs") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = wicketsText,
+                        onValueChange = { if (it.all { c -> c.isDigit() }) wicketsText = it },
+                        label = { Text("Wickets") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (!isValid) {
+                    Text(
+                        "Enter a valid score (0-$maxWickets wickets).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (isValid) onConfirm(runs!!, wickets!!) },
+                enabled = isValid
+            ) { Text("Complete Innings") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * req: lets the chasing team's target be set directly by hand — for when the 1st
+ * innings' score wasn't entered ball-by-ball in the app, so the "1st innings total + 1"
+ * that would normally be computed automatically was never right in the first place.
+ */
+@Composable
+private fun SetTargetDialog(
+    currentTarget: Int?,
+    onDismiss: () -> Unit,
+    onConfirm: (target: Int) -> Unit
+) {
+    var targetText by remember { mutableStateOf(currentTarget?.toString() ?: "") }
+    val target = targetText.toIntOrNull()
+    val isValid = target != null && target > 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Set Target Manually") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Use this if the first innings' score wasn't entered ball-by-ball in the " +
+                        "app and you already know the target this team needs to chase.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = targetText,
+                    onValueChange = { if (it.all { c -> c.isDigit() }) targetText = it },
+                    label = { Text("Target (runs to win)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (!isValid) {
+                    Text(
+                        "Enter a target greater than 0.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (isValid) onConfirm(target!!) },
+                enabled = isValid
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 @Composable
 private fun EditBatsmenDialog(
     currentStriker: String,
@@ -662,13 +796,16 @@ private fun EditBatsmenDialog(
     val nonStrikerFocusRequester = remember { FocusRequester() }
     val saveButtonFocusRequester = remember { FocusRequester() }
 
+    val canSave = strikerName.isNotBlank() && nonStrikerName.isNotBlank() &&
+        !strikerName.trim().equals(nonStrikerName.trim(), ignoreCase = true)
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Batsmen Names") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 PlayerPickerField(
-                    label = "Striker Name",
+                    label = "Striker Name *",
                     value = strikerName,
                     onValueChange = { strikerName = it },
                     availablePlayerNames = availablePlayers.filter { it != nonStrikerName },
@@ -676,7 +813,7 @@ private fun EditBatsmenDialog(
                     nextFocusRequester = nonStrikerFocusRequester
                 )
                 PlayerPickerField(
-                    label = "Non-Striker Name",
+                    label = "Non-Striker Name *",
                     value = nonStrikerName,
                     onValueChange = { nonStrikerName = it },
                     availablePlayerNames = availablePlayers.filter { it != strikerName },
@@ -688,6 +825,7 @@ private fun EditBatsmenDialog(
         confirmButton = {
             TextButton(
                 onClick = { onConfirm(strikerName, nonStrikerName) },
+                enabled = canSave,
                 modifier = Modifier.focusRequester(saveButtonFocusRequester)
             ) {
                 Text("Save")
@@ -697,27 +835,37 @@ private fun EditBatsmenDialog(
     )
 }
 
+/**
+ * req: no default bowler name is ever pre-filled — every over (and every manual bowler
+ * change) requires an explicit selection from the dropdown or a typed name. When
+ * [mandatory] is true (the automatic prompt shown after each over completes), the dialog
+ * cannot be dismissed without picking a bowler — there is no Cancel and tapping outside
+ * does nothing, since leaving the field blank isn't allowed for a live over.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditBowlerDialog(
-    currentBowler: String,
     existingBowlers: List<String>,
+    mandatory: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
-    var bowlerName by remember { mutableStateOf(currentBowler) }
+    var bowlerName by remember { mutableStateOf("") }
     // req #4: selecting a bowler highlights Save and closes the keyboard
     val bowlerFocusRequester = remember { FocusRequester() }
     val saveButtonFocusRequester = remember { FocusRequester() }
+    val cancelButton: (@Composable () -> Unit)? = if (mandatory) null else {
+        { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Select or Enter Bowler") },
+        onDismissRequest = { if (!mandatory) onDismiss() },
+        title = { Text(if (mandatory) "Select Bowler for Next Over" else "Select or Enter Bowler") },
         text = {
             // Single dropdown picker — shows the full bowlers list with scroll,
             // plus allows free-text for a new name not in the list.
             PlayerPickerField(
-                label = "Bowler Name",
+                label = "Bowler Name *",
                 value = bowlerName,
                 onValueChange = { bowlerName = it },
                 availablePlayerNames = existingBowlers,
@@ -728,18 +876,20 @@ private fun EditBowlerDialog(
         confirmButton = {
             TextButton(
                 onClick = { onConfirm(bowlerName) },
+                enabled = bowlerName.isNotBlank(),
                 modifier = Modifier.focusRequester(saveButtonFocusRequester)
             ) { Text("Save") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = cancelButton
     )
 }
 
 /**
- * req #2: shown once, automatically, when a new innings starts — lets the user pick the
- * opening striker, non-striker, and bowler for that innings in a single popup instead of
- * having to remember to open "Edit Batsmen" / "Edit Bowler" separately. Skipping leaves the
- * innings' placeholder names ("Batsman 1" etc.) in place, same as today.
+ * req #2 / mandatory-fields req: shown automatically when a new innings starts — requires
+ * the user to pick the opening striker, non-striker, and bowler for that innings before
+ * scoring can begin. There is no "Skip" and no default placeholder names — every field
+ * must be either chosen from the dropdown or typed in, and Start Innings stays disabled
+ * until all three are filled with three distinct player names.
  */
 @Composable
 private fun SelectOpeningPlayersDialog(
@@ -747,7 +897,6 @@ private fun SelectOpeningPlayersDialog(
     bowlingTeam: String,
     availableBatsmen: List<String>,
     availableBowlers: List<String>,
-    onDismiss: () -> Unit,
     onConfirm: (strikerName: String, nonStrikerName: String, bowlerName: String) -> Unit
 ) {
     var strikerName by remember { mutableStateOf("") }
@@ -758,17 +907,23 @@ private fun SelectOpeningPlayersDialog(
     val bowlerFocusRequester = remember { FocusRequester() }
     val startButtonFocusRequester = remember { FocusRequester() }
 
+    val canStart = strikerName.isNotBlank() && nonStrikerName.isNotBlank() &&
+        !strikerName.trim().equals(nonStrikerName.trim(), ignoreCase = true) &&
+        bowlerName.isNotBlank()
+
     AlertDialog(
-        onDismissRequest = onDismiss,
+        // Mandatory: tapping outside (or the back button) must not skip past this.
+        onDismissRequest = {},
         title = { Text("New Innings: $battingTeam batting") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Pick the opening batsmen and the first bowler ($bowlingTeam) for this innings.",
+                    "Select or enter the opening batsmen and the first bowler ($bowlingTeam) " +
+                        "for this innings. All three are required to start scoring.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 PlayerPickerField(
-                    label = "Striker Name",
+                    label = "Striker Name *",
                     value = strikerName,
                     onValueChange = { strikerName = it },
                     availablePlayerNames = availableBatsmen.filter { it != nonStrikerName },
@@ -776,7 +931,7 @@ private fun SelectOpeningPlayersDialog(
                     nextFocusRequester = nonStrikerFocusRequester
                 )
                 PlayerPickerField(
-                    label = "Non-Striker Name",
+                    label = "Non-Striker Name *",
                     value = nonStrikerName,
                     onValueChange = { nonStrikerName = it },
                     availablePlayerNames = availableBatsmen.filter { it != strikerName },
@@ -784,7 +939,7 @@ private fun SelectOpeningPlayersDialog(
                     nextFocusRequester = bowlerFocusRequester
                 )
                 PlayerPickerField(
-                    label = "Opening Bowler Name",
+                    label = "Opening Bowler Name *",
                     value = bowlerName,
                     onValueChange = { bowlerName = it },
                     availablePlayerNames = availableBowlers,
@@ -796,10 +951,10 @@ private fun SelectOpeningPlayersDialog(
         confirmButton = {
             TextButton(
                 onClick = { onConfirm(strikerName, nonStrikerName, bowlerName) },
+                enabled = canStart,
                 modifier = Modifier.focusRequester(startButtonFocusRequester)
             ) { Text("Start Innings") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Skip") } }
+        }
     )
 }
 
@@ -807,14 +962,15 @@ private fun SelectOpeningPlayersDialog(
 private fun WicketDialog(
     strikerName: String,
     nonStrikerName: String,
-    nextBatsmanDefault: String,
     availableIncomingBatsmen: List<String>,
     onDismiss: () -> Unit,
     onConfirm: (WicketType, Int, String, DismissedEnd) -> Unit
 ) {
     var selectedType by remember { mutableStateOf<WicketType?>(null) }
     var runsCompleted by remember { mutableStateOf(0) }
-    var newBatsmanName by remember { mutableStateOf(nextBatsmanDefault) }
+    // req: no default "Batsman N" placeholder — the incoming batsman must be picked
+    // from the dropdown or typed in before the wicket can be confirmed.
+    var newBatsmanName by remember { mutableStateOf("") }
     var dismissedEnd by remember { mutableStateOf(DismissedEnd.STRIKER) }
     // req #4: selecting the incoming batsman highlights Confirm and closes the keyboard
     val incomingBatsmanFocusRequester = remember { FocusRequester() }
@@ -868,7 +1024,7 @@ private fun WicketDialog(
                 }
                 Spacer(Modifier.height(4.dp))
                 PlayerPickerField(
-                    label = "Incoming Batsman Name",
+                    label = "Incoming Batsman Name *",
                     value = newBatsmanName,
                     onValueChange = { newBatsmanName = it },
                     availablePlayerNames = availableIncomingBatsmen,
@@ -880,7 +1036,7 @@ private fun WicketDialog(
         confirmButton = {
             TextButton(
                 onClick = { selectedType?.let { onConfirm(it, runsCompleted, newBatsmanName, dismissedEnd) } },
-                enabled = selectedType != null,
+                enabled = selectedType != null && newBatsmanName.isNotBlank(),
                 modifier = Modifier.focusRequester(confirmButtonFocusRequester)
             ) { Text("Confirm") }
         },

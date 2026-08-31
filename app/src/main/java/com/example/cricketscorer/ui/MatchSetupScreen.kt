@@ -184,9 +184,12 @@ fun MatchSetupScreen(
                 squadAPlayers.map { it.name }
             }
 
-            Text("Opening Batsmen", style = MaterialTheme.typography.titleMedium)
+            // req: striker, non-striker, and opening bowler are mandatory — no default
+            // placeholder names are ever saved. The user must pick from the dropdown
+            // (when a squad is linked) or type a name themselves.
+            Text("Opening Batsmen (required)", style = MaterialTheme.typography.titleMedium)
             PlayerPickerField(
-                label = "Striker Name",
+                label = "Striker Name *",
                 value = viewModel.strikerName,
                 onValueChange = { viewModel.strikerName = it },
                 availablePlayerNames = openingPlayerNames.filter { it != viewModel.nonStrikerName },
@@ -195,7 +198,7 @@ fun MatchSetupScreen(
             )
             Spacer(Modifier.height(4.dp))
             PlayerPickerField(
-                label = "Non-Striker Name",
+                label = "Non-Striker Name *",
                 value = viewModel.nonStrikerName,
                 onValueChange = { viewModel.nonStrikerName = it },
                 availablePlayerNames = openingPlayerNames.filter { it != viewModel.strikerName },
@@ -203,9 +206,9 @@ fun MatchSetupScreen(
                 nextFocusRequester = bowlerFocusRequester
             )
 
-            Text("Opening Bowler", style = MaterialTheme.typography.titleMedium)
+            Text("Opening Bowler (required)", style = MaterialTheme.typography.titleMedium)
             PlayerPickerField(
-                label = "Opening Bowler Name",
+                label = "Opening Bowler Name *",
                 value = viewModel.openingBowlerName,
                 onValueChange = { viewModel.openingBowlerName = it },
                 availablePlayerNames = bowlingPlayerNames,
@@ -221,8 +224,14 @@ fun MatchSetupScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            val canStart = viewModel.strikerName.isNotBlank() &&
+                viewModel.nonStrikerName.isNotBlank() &&
+                !viewModel.strikerName.trim().equals(viewModel.nonStrikerName.trim(), ignoreCase = true) &&
+                viewModel.openingBowlerName.isNotBlank()
+
             Button(
                 onClick = { viewModel.startMatch(onMatchStarted) },
+                enabled = canStart,
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.CenterHorizontally)

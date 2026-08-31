@@ -103,6 +103,25 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
             errorMessage = "Select the toss winner."
             return
         }
+        // req: striker/non-striker/opening bowler are mandatory — no silent
+        // "Batsman 1" / "Bowler 1" placeholders. The user must either pick from the
+        // squad dropdown or type a name for each.
+        if (strikerName.isBlank()) {
+            errorMessage = "Select or enter the striker's name."
+            return
+        }
+        if (nonStrikerName.isBlank()) {
+            errorMessage = "Select or enter the non-striker's name."
+            return
+        }
+        if (strikerName.trim().equals(nonStrikerName.trim(), ignoreCase = true)) {
+            errorMessage = "Striker and non-striker must be different players."
+            return
+        }
+        if (openingBowlerName.isBlank()) {
+            errorMessage = "Select or enter the opening bowler's name."
+            return
+        }
         errorMessage = null
 
         val teamA = teamAName.trim()
@@ -148,9 +167,10 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
                 bowlingTeam = bowlingFirst,
                 battingSquadId = battingSquadId,
                 bowlingSquadId = bowlingSquadId,
-                strikerName = strikerName.ifBlank { "Batsman 1" },
-                nonStrikerName = nonStrikerName.ifBlank { "Batsman 2" },
-                currentBowlerName = openingBowlerName.ifBlank { "Bowler 1" }
+                // Validated non-blank above — no placeholder fallback needed.
+                strikerName = strikerName.trim(),
+                nonStrikerName = nonStrikerName.trim(),
+                currentBowlerName = openingBowlerName.trim()
             )
             val inningsId = repository.createInnings(firstInnings)
 
