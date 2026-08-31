@@ -108,7 +108,21 @@ fun ScoringScreen(
         modifier = Modifier.fillMaxSize()
     ) {
         TopAppBar(
-            title = { Text("${innings.battingTeam} vs ${innings.bowlingTeam}") },
+            title = {
+                Column {
+                    Text("${innings.battingTeam} vs ${innings.bowlingTeam}")
+                    // Cloud Sync: show the join code so it can be read/shared to the other
+                    // phone (Home > Join Shared Match). Absent only if the initial push to
+                    // Firestore failed (e.g. no network) when the match was created.
+                    state.match?.shareCode?.let { code ->
+                        Text(
+                            "Match Code: $code",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
             navigationIcon = {
                 IconButton(onClick = onNavigateBack) {
                     Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

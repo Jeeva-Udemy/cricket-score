@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Person
@@ -31,10 +32,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,9 +47,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.viewmodel.BackupUiState
 import com.example.cricketscorer.viewmodel.HomeViewModel
+import com.example.cricketscorer.viewmodel.JoinMatchUiState
 
 private data class HomeAction(
     val label: String,
@@ -70,6 +75,18 @@ fun HomeScreen(
     val matches by viewModel.matches.collectAsState()
     val backupState by viewModel.backupState.collectAsState()
     var showBackupDialog by remember { mutableStateOf(false) }
+
+    // ---- Cloud Sync: Join Shared Match (req: score the same match from two phones) ----
+    val joinMatchState by viewModel.joinMatchState.collectAsState()
+    var showJoinDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(joinMatchState) {
+        val state = joinMatchState
+        if (state is JoinMatchUiState.Success) {
+            showJoinDialog = false
+            viewModel.dismissJoinMatchStatus()
+            onOpenMatch(state.matchId)
+        }
+    }
 
     val inProgressMatches = matches.filter { !it.isCompleted }
 
@@ -158,6 +175,16 @@ fun HomeScreen(
                 Text("Backup & Resync")
             }
 
+            // ---- Join Shared Match (Cloud Sync: TeamA on Mobile1, TeamB on Mobile2) ----
+            OutlinedButton(
+                onClick = { showJoinDialog = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.GroupAdd, contentDescription = null, modifier = Modifier.height(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Join Shared Match")
+            }
+
             // req: the "In Progress Matches" list used to be duplicated here and on the
             // Match History screen. It's now shown only on Match History (which already
             // marks each match's status), so it isn't removed here and repeated there.
@@ -181,6 +208,68 @@ fun HomeScreen(
             }
         )
     }
+
+    if (showJoinDialog) {
+        JoinMatchDialog(
+            joinMatchState = joinMatchState,
+            onJoin = { code -> viewModel.joinMatchByCode(code) },
+            onDismiss = {
+                showJoinDialog = false
+                viewModel.dismissJoinMatchStatus()
+            }
+        )
+    }
+}
+
+@Composable
+private fun JoinMatchDialog(
+    joinMatchState: JoinMatchUiState,
+    onJoin: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var code by remember { mutableStateOf("") }
+    val inProgress = joinMatchState is JoinMatchUiState.Joining
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Join Shared Match") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Enter the Match Code shown at the top of the Scoring screen on the " +
+                        "other phone to see and update the same match live.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it.uppercase() },
+                    label = { Text("Match Code") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters
+                    ),
+                    enabled = !inProgress,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (inProgress) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.height(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Joining…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                (joinMatchState as? JoinMatchUiState.Error)?.let {
+                    Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onJoin(code) }, enabled = !inProgress && code.isNotBlank()) {
+                Text("Join")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !inProgress) { Text("Cancel") } }
+    )
 }
 
 @Composable

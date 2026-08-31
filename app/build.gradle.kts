@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp") // Used for Room's annotation processing
+    id("com.google.gms.google-services") // Cloud Sync: reads google-services.json below
 }
 
 android {
@@ -117,6 +118,12 @@ dependencies {
     implementation("com.google.http-client:google-http-client:1.44.1") {
         exclude(group = "org.apache.httpcomponents")
     }
+
+    // Cloud Sync (Firestore) — mirrors a live match between Mobile1 (TeamA) and Mobile2
+    // (TeamB) so both can update the same score. See SYNC_SETUP.md.
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

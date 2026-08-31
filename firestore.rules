@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Cloud Sync: each shared match lives at liveMatches/{shareCode}. There's no login in
+    // this app — the 6-character code itself is the "password" (like a meeting link), so
+    // anyone who has it can read/write that one document. Nothing else is reachable.
+    match /liveMatches/{shareCode} {
+      allow read, write: if true;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

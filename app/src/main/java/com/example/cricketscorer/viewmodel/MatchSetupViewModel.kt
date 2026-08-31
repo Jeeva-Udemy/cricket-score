@@ -11,10 +11,12 @@ import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.data.PlayerEntity
 import com.example.cricketscorer.data.SquadEntity
 import com.example.cricketscorer.model.TossDecision
+import com.example.cricketscorer.sync.CloudSync
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel() {
 
@@ -173,6 +175,20 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
                 currentBowlerName = openingBowlerName.trim()
             )
             val inningsId = repository.createInnings(firstInnings)
+
+            // Cloud Sync: every match gets a share code up front so the Scoring screen can
+            // show it immediately ("Match Code: XXXXXX") for the other phone to join via
+            // Home > Join Shared Match. Best-effort — if there's no network or Firebase
+            // isn't configured yet (see SYNC_SETUP.md), the initial push fails and we
+            // simply leave the match without a share code; scoring still works purely
+            // locally either way, ScoringViewModel only tries to sync when shareCode != null.
+            runCatching {
+                val code = CloudSync.generateShareCode()
+                val matchWithCode = match.copy(matchId = matchId, shareCode = code)
+                val snapshot = repository.getSnapshotForMatch(matchId).copy(matches = listOf(matchWithCode))
+                CloudSync.pushSnapshot(code, snapshot, deviceId = UUID.randomUUID().toString())
+                repository.updateMatch(matchWithCode)
+            }
 
             onCreated(matchId, inningsId)
         }

@@ -9,11 +9,15 @@ import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.model.DismissedEnd
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.WicketType
+import com.example.cricketscorer.sync.CloudSync
+import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 data class BatsmanStat(
     val name: String,
@@ -303,6 +307,17 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     private var observedBowlingSquadId: Long? = null
     private var _lastObservedInningsNumber: Int? = null
 
+    // ---- Cloud Sync (Firestore) ----
+    // deviceId tags every push we make so we can recognize (and ignore) it if Firestore
+    // echoes it back to our own listener; applyingRemoteSnapshot suppresses the push that
+    // would otherwise fire from the Room Flow updates triggered by applying a remote
+    // snapshot, which would otherwise just bounce the same state back and forth forever.
+    private val deviceId = UUID.randomUUID().toString()
+    private var cloudListener: ListenerRegistration? = null
+    private var observedShareCode: String? = null
+    private var cloudPushJob: Job? = null
+    private var applyingRemoteSnapshot = false
+
     private val _uiState = MutableStateFlow(ScoringUiState())
     val uiState: StateFlow<ScoringUiState> = _uiState.asStateFlow()
 
@@ -310,6 +325,46 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
         this.matchId = matchId
         observedInningsIds.clear()
         observeMatchData()
+    }
+
+    /** (Re)attaches the Firestore listener for this match's share code, if it has one. */
+    private fun attachCloudSyncIfNeeded(shareCode: String?) {
+        if (shareCode == null || shareCode == observedShareCode) return
+        runCatching {
+            cloudListener?.remove()
+            observedShareCode = shareCode
+            cloudListener = CloudSync.listen(shareCode, deviceId) { snapshot ->
+                viewModelScope.launch {
+                    applyingRemoteSnapshot = true
+                    try {
+                        repository.applyMatchSnapshot(snapshot)
+                    } finally {
+                        applyingRemoteSnapshot = false
+                    }
+                }
+            }
+        }
+    }
+
+    /** Debounced push of the current local state to Firestore so rapid taps (e.g. undo then
+     *  re-score) collapse into one write instead of one per intermediate emission. */
+    private fun scheduleCloudPush() {
+        val shareCode = _uiState.value.match?.shareCode ?: return
+        if (applyingRemoteSnapshot) return
+        cloudPushJob?.cancel()
+        cloudPushJob = viewModelScope.launch {
+            delay(400)
+            runCatching {
+                val snapshot = repository.getSnapshotForMatch(matchId)
+                CloudSync.pushSnapshot(shareCode, snapshot, deviceId)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        cloudListener?.remove()
+        cloudPushJob?.cancel()
     }
 
     private fun observeMatchData() {
@@ -327,6 +382,7 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                                     val map = _uiState.value.allBallEvents.toMutableMap()
                                     map[inn.inningsId] = events
                                     _uiState.value = _uiState.value.copy(allBallEvents = map)
+                                    scheduleCloudPush()
                                 }
                             }
                         }
@@ -343,6 +399,7 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                         hasAutoSwitchedToSecondInnings = if (shouldAutoSwitch) true else _uiState.value.hasAutoSwitchedToSecondInnings,
                         isLoading = false
                     )
+                    scheduleCloudPush()
 
                     // Subscribe to squad player lists for the live innings' batting/bowling squads.
                     // Always re-evaluate by clearing the cached IDs so the swap between innings
@@ -377,6 +434,8 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                         matchCompleteMessage = match.resultSummary,
                         isLoading = false
                     )
+                    attachCloudSyncIfNeeded(match.shareCode)
+                    scheduleCloudPush()
                 }
             }
         }

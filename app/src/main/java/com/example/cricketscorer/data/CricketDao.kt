@@ -77,8 +77,17 @@ interface CricketDao {
     @Query("SELECT * FROM ball_events WHERE inningsId = :inningsId ORDER BY ballId DESC LIMIT 1")
     suspend fun getLastBallEvent(inningsId: Long): BallEventEntity?
 
+    @Query("SELECT * FROM ball_events WHERE inningsId = :inningsId ORDER BY ballId ASC")
+    suspend fun getBallEventsForInnings(inningsId: Long): List<BallEventEntity>
+
     @Query("DELETE FROM ball_events WHERE ballId = :ballId")
     suspend fun deleteBallEvent(ballId: Long)
+
+    /** Cloud Sync: wipes the locally-known balls for these innings before re-inserting the
+     *  authoritative set that just arrived from Firestore, so a remote Undo (which removes a
+     *  row) is reflected locally instead of only ever adding rows. */
+    @Query("DELETE FROM ball_events WHERE inningsId IN (:inningsIds)")
+    suspend fun deleteBallEventsForInnings(inningsIds: List<Long>)
 
     @Query("DELETE FROM ball_events WHERE inningsId IN (SELECT inningsId FROM innings WHERE matchId IN (:matchIds))")
     suspend fun deleteBallEventsForMatches(matchIds: List<Long>)

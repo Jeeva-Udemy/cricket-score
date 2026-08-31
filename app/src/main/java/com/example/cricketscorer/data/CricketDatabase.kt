@@ -14,7 +14,7 @@ import androidx.room.TypeConverters
         SquadEntity::class,
         PlayerEntity::class
     ],
-    version = 5,
+    version = 6, // v6: added MatchEntity.shareCode for Cloud Sync (Firestore)
     exportSchema = false
 )
 @TypeConverters(Converters::class)

@@ -42,6 +42,41 @@ class CricketRepository(private val dao: CricketDao) {
         return last
     }
 
+    // ---------- Cloud Sync (Firestore) ----------
+    // A "live match" mirror is much smaller than the full [BackupSnapshot] above: only the
+    // one match, its innings, and their ball events — never squads/players (those stay
+    // local/per-device) and never other matches, since only the match being actively shared
+    // is written to Firestore. See [com.example.cricketscorer.sync.CloudSync].
+
+    /** Builds the payload pushed to Firestore whenever this match's local data changes. */
+    suspend fun getSnapshotForMatch(matchId: Long): BackupSnapshot {
+        val match = dao.getMatch(matchId)
+        val innings = dao.getInningsForMatch(matchId)
+        val ballEvents = innings.flatMap { dao.getBallEventsForInnings(it.inningsId) }
+        return BackupSnapshot(
+            matches = listOfNotNull(match),
+            innings = innings,
+            ballEvents = ballEvents,
+            squads = emptyList(),
+            players = emptyList()
+        )
+    }
+
+    /**
+     * Applies a [BackupSnapshot] received from Firestore (the other device's latest state)
+     * onto local Room, preserving the original ids so this device's rows line up with the
+     * other device's (same trick [restoreFromBackup] already uses for Drive resync).
+     * Ball events are fully replaced per-innings rather than merged, so a ball undone on the
+     * other device disappears here too instead of only ever being added to.
+     */
+    suspend fun applyMatchSnapshot(snapshot: BackupSnapshot) {
+        snapshot.matches.forEach { dao.restoreMatch(it) }
+        snapshot.innings.forEach { dao.restoreInnings(it) }
+        val inningsIds = snapshot.innings.map { it.inningsId }
+        if (inningsIds.isNotEmpty()) dao.deleteBallEventsForInnings(inningsIds)
+        snapshot.ballEvents.forEach { dao.restoreBallEvent(it) }
+    }
+
     // Squads
     suspend fun createSquad(squad: SquadEntity): Long = dao.insertSquad(squad)
     suspend fun updateSquad(squad: SquadEntity) = dao.updateSquad(squad)

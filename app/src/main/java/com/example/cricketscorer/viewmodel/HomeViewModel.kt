@@ -8,6 +8,7 @@ import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.backup.DriveBackupManager
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.sync.CloudSync
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
@@ -26,6 +27,15 @@ sealed class BackupUiState {
     object Resyncing : BackupUiState()
     data class Success(val message: String) : BackupUiState()
     data class Error(val message: String) : BackupUiState()
+}
+
+/** State for the "Join Shared Match" dialog (Cloud Sync — req: score the same match from
+ *  two phones, one per team). */
+sealed class JoinMatchUiState {
+    object Idle : JoinMatchUiState()
+    object Joining : JoinMatchUiState()
+    data class Success(val matchId: Long) : JoinMatchUiState()
+    data class Error(val message: String) : JoinMatchUiState()
 }
 
 class HomeViewModel(
@@ -217,5 +227,46 @@ class HomeViewModel(
 
     fun dismissBackupStatus() {
         _backupState.value = BackupUiState.Idle
+    }
+
+    // ---------- Cloud Sync: Join Shared Match ----------
+
+    private val _joinMatchState = MutableStateFlow<JoinMatchUiState>(JoinMatchUiState.Idle)
+    val joinMatchState: StateFlow<JoinMatchUiState> = _joinMatchState.asStateFlow()
+
+    /** Called with the 6-character code shown on the other phone's Scoring screen ("Match
+     *  Code: XXXXXX"). Downloads that match's current state from Firestore and copies it
+     *  into local Room (same row ids as the other device) so it opens exactly where the
+     *  other phone left off, then keeps listening for further updates from it. */
+    fun joinMatchByCode(rawCode: String) {
+        val code = rawCode.trim().uppercase()
+        if (code.isBlank()) {
+            _joinMatchState.value = JoinMatchUiState.Error("Enter the match code.")
+            return
+        }
+        _joinMatchState.value = JoinMatchUiState.Joining
+        viewModelScope.launch {
+            runCatching { CloudSync.fetchSnapshot(code) }
+                .onSuccess { snapshot ->
+                    val match = snapshot?.matches?.firstOrNull()
+                    if (snapshot == null || match == null) {
+                        _joinMatchState.value = JoinMatchUiState.Error(
+                            "No shared match found for code \"$code\". Double-check it on the other phone."
+                        )
+                        return@onSuccess
+                    }
+                    repository.applyMatchSnapshot(snapshot)
+                    _joinMatchState.value = JoinMatchUiState.Success(match.matchId)
+                }
+                .onFailure {
+                    _joinMatchState.value = JoinMatchUiState.Error(
+                        it.message ?: "Couldn't reach the match. Check your connection and try again."
+                    )
+                }
+        }
+    }
+
+    fun dismissJoinMatchStatus() {
+        _joinMatchState.value = JoinMatchUiState.Idle
     }
 }

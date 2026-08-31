@@ -24,5 +24,9 @@ data class MatchEntity(
     val currentInningsNumber: Int = 1,
     val isCompleted: Boolean = false,
     val resultSummary: String? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Cloud Sync (Firestore): short code the other device enters via "Join Shared Match"
+     *  to mirror this match live. Null means the match has never been shared. See
+     *  [com.example.cricketscorer.sync.CloudSync]. */
+    val shareCode: String? = null
 )

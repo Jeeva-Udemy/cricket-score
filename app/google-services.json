@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "44551669335",
+    "project_id": "cricketscorer-beefb",
+    "storage_bucket": "cricketscorer-beefb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:44551669335:android:9994862be93d71c2ac4512",
+        "android_client_info": {
+          "package_name": "com.example.cricketscorer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCwY4f8dGnJceW5GP4D6kGTN9zUgviRf3U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

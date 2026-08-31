@@ -63,6 +63,7 @@ object BackupSerializer {
         put("isCompleted", isCompleted)
         put("resultSummary", resultSummary ?: JSONObject.NULL)
         put("createdAt", createdAt)
+        put("shareCode", shareCode ?: JSONObject.NULL)
     }
 
     private fun JSONObject.toMatchEntity(): MatchEntity = MatchEntity(
@@ -78,7 +79,8 @@ object BackupSerializer {
         currentInningsNumber = optInt("currentInningsNumber", 1),
         isCompleted = optBoolean("isCompleted", false),
         resultSummary = if (isNull("resultSummary")) null else getString("resultSummary"),
-        createdAt = optLong("createdAt", System.currentTimeMillis())
+        createdAt = optLong("createdAt", System.currentTimeMillis()),
+        shareCode = if (has("shareCode") && !isNull("shareCode")) getString("shareCode") else null
     )
 
     // ---- Innings ----
