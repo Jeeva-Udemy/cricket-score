@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cricketscorer.data.CloudDeviceIdStore
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
@@ -18,7 +19,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 class MatchSetupViewModel(
     private val repository: CricketRepository,
@@ -198,7 +198,11 @@ class MatchSetupViewModel(
                 val code = CloudSync.generateShareCode()
                 val matchWithCode = match.copy(matchId = matchId, shareCode = code)
                 val snapshot = repository.getSnapshotForMatch(matchId).copy(matches = listOf(matchWithCode))
-                CloudSync.pushSnapshot(code, snapshot, deviceId = UUID.randomUUID().toString())
+                // Must use the SAME stable per-device id that ScoringViewModel's listener will
+                // use once it attaches for this match — otherwise this device won't recognize
+                // this very first push as "self" and will replay it back over the first balls
+                // scored, reverting them. See CloudDeviceIdStore.
+                CloudSync.pushSnapshot(code, snapshot, deviceId = CloudDeviceIdStore.getDeviceId(appContext))
                 repository.updateMatch(matchWithCode)
             }
 

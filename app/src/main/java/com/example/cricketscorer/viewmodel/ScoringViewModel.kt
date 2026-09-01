@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.data.BallEventEntity
+import com.example.cricketscorer.data.CloudDeviceIdStore
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
@@ -20,7 +21,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 data class BatsmanStat(
     val name: String,
@@ -371,7 +371,13 @@ class ScoringViewModel(
     // echoes it back to our own listener; applyingRemoteSnapshot suppresses the push that
     // would otherwise fire from the Room Flow updates triggered by applying a remote
     // snapshot, which would otherwise just bounce the same state back and forth forever.
-    private val deviceId = UUID.randomUUID().toString()
+    //
+    // Must be STABLE per device (see CloudDeviceIdStore) rather than a fresh UUID per
+    // ViewModel instance — otherwise this device can't recognize its own earlier pushes
+    // (e.g. the initial snapshot pushed at match creation in MatchSetupViewModel) as "self"
+    // once this ViewModel attaches its listener, and ends up replaying that old snapshot
+    // back over whatever was just scored locally.
+    private val deviceId = CloudDeviceIdStore.getDeviceId(appContext)
     private var cloudListener: ListenerRegistration? = null
     private var observedShareCode: String? = null
     private var cloudPushJob: Job? = null
