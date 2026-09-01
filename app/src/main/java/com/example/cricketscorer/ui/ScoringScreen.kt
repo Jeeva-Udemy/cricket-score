@@ -1,6 +1,8 @@
 package com.example.cricketscorer.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -85,6 +88,9 @@ fun ScoringScreen(
     var isBowlerChangeMandatory by remember { mutableStateOf(false) }
     var showCompleteInningsDialog by remember { mutableStateOf(false) }
     var showSetTargetDialog by remember { mutableStateOf(false) }
+    // req: QR code option (alongside the plain text code) so the other phone can join by
+    // scanning instead of typing the 6-character Match Code.
+    var showShareQrDialog by remember { mutableStateOf(false) }
 
     if (state.isLoading || state.match == null || state.currentInnings == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -121,11 +127,25 @@ fun ScoringScreen(
                     // phone (Home > Join Shared Match). Absent only if the initial push to
                     // Firestore failed (e.g. no network) when the match was created.
                     state.match?.shareCode?.let { code ->
-                        Text(
-                            "Match Code: $code",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Match Code: $code",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            // req: QR option alongside the plain code, so the other phone can
+                            // just scan instead of typing it in.
+                            IconButton(
+                                onClick = { showShareQrDialog = true },
+                                modifier = Modifier.height(20.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCode,
+                                    contentDescription = "Show QR code to join this match",
+                                    modifier = Modifier.height(16.dp)
+                                )
+                            }
+                        }
                     }
                     // req #3/#4: make it obvious which device currently has the ball, so
                     // "why can't I enter anything" is never a mystery on the read-only phone.
@@ -212,6 +232,12 @@ fun ScoringScreen(
     }
 
     // ---- Dialogs ----
+    if (showShareQrDialog) {
+        state.match?.shareCode?.let { code ->
+            ShareMatchQrDialog(code = code, onDismiss = { showShareQrDialog = false })
+        }
+    }
+
     showExtraDialogFor?.let { extraType ->
         ExtraRunsDialog(
             extraType = extraType,
@@ -1111,5 +1137,56 @@ private fun WicketDialog(
             ) { Text("Confirm") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * req: "Keep a QR code and scan option as well to join the match along with manually
+ * entering the code." — shown from the tappable QR icon next to "Match Code: XXXXXX" on the
+ * scoring device, so the other phone can just point its camera at this instead of typing the
+ * 6 characters in by hand (Home > Join Shared Match > Scan QR Code).
+ */
+@Composable
+private fun ShareMatchQrDialog(code: String, onDismiss: () -> Unit) {
+    val qrBitmap = remember(code) { generateQrCodeBitmap(code) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Scan to Join") },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "On the other phone: Home → Join Shared Match → Scan QR Code.",
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (qrBitmap != null) {
+                    Image(
+                        bitmap = qrBitmap,
+                        contentDescription = "QR code for match code $code",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                    )
+                } else {
+                    Text(
+                        "Couldn't generate a QR code — use the Match Code below instead.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Text(
+                    code,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
     )
 }

@@ -2,6 +2,8 @@ package com.example.cricketscorer.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,7 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.model.TossDecision
 import com.example.cricketscorer.viewmodel.MatchSetupViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MatchSetupScreen(
     viewModel: MatchSetupViewModel,
@@ -140,7 +142,11 @@ fun MatchSetupScreen(
             )
 
             Text("Toss Winner", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // req: flexible across screen sizes. A plain Row here doesn't wrap — on a narrow
+            // phone, two chips holding long (user-typed) team names could run past the right
+            // edge of the screen instead of resizing, since this Row isn't scrollable either.
+            // FlowRow wraps the second chip onto its own line instead when it doesn't fit.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 val teamAValid = viewModel.teamAName.isNotBlank()
                 val teamBValid = viewModel.teamBName.isNotBlank()
 
@@ -157,7 +163,7 @@ fun MatchSetupScreen(
             }
 
             Text("Toss Decision", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 FilterChip(
                     selected = viewModel.tossDecision == TossDecision.BAT,
                     onClick = { viewModel.tossDecision = TossDecision.BAT },

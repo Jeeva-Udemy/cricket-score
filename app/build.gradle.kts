@@ -125,5 +125,13 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore-ktx")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
+    // Join Shared Match by QR (req: scan in addition to typing the 6-char code):
+    // - zxing core renders the "Match Code" as a QR bitmap (pure Java, no extra permissions).
+    // - play-services-code-scanner launches Google's own scanner UI/activity to read it back,
+    //   which means no CAMERA permission needs to be declared or requested by this app at all
+    //   (see AndroidManifest.xml's com.google.mlkit.vision.DEPENDENCIES meta-data).
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

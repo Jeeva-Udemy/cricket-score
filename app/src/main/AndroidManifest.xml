@@ -13,6 +13,13 @@
         android:theme="@style/Theme.CricketScorer"
         android:supportsRtl="true">
 
+        <!-- Join Shared Match by QR: lets Google Play services download/serve the barcode
+             scanning UI on demand (com.google.mlkit:play-services-code-scanner). This does
+             NOT require declaring android.permission.CAMERA — Play services owns that. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

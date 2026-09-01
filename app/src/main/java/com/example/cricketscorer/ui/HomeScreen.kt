@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -22,12 +23,14 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.SportsCricket
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -46,8 +49,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.viewmodel.BackupUiState
 import com.example.cricketscorer.viewmodel.HomeViewModel
@@ -274,7 +279,9 @@ private fun JoinMatchDialog(
     onDismiss: () -> Unit
 ) {
     var code by remember { mutableStateOf("") }
+    var scanError by remember { mutableStateOf<String?>(null) }
     val inProgress = joinMatchState is JoinMatchUiState.Joining
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -282,10 +289,43 @@ private fun JoinMatchDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Enter the Match Code shown at the top of the Scoring screen on the " +
-                        "other phone to see and update the same match live.",
+                    "Scan the QR code shown at the top of the Scoring screen on the other " +
+                        "phone, or enter the Match Code by hand, to see and update the same " +
+                        "match live.",
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                // req: scan option alongside manual entry.
+                OutlinedButton(
+                    onClick = {
+                        scanError = null
+                        scanQrCodeForMatch(
+                            context = context,
+                            onResult = { scanned ->
+                                code = scanned
+                                onJoin(scanned)
+                            },
+                            onFailure = { message -> scanError = message }
+                        )
+                    },
+                    enabled = !inProgress,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.height(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scan QR Code")
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Divider(modifier = Modifier.weight(1f))
+                    Text(
+                        "  or  ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Divider(modifier = Modifier.weight(1f))
+                }
+
                 OutlinedTextField(
                     value = code,
                     onValueChange = { code = it.uppercase() },
@@ -304,6 +344,9 @@ private fun JoinMatchDialog(
                         Text("Joining…", style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                scanError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
                 (joinMatchState as? JoinMatchUiState.Error)?.let {
                     Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
@@ -320,15 +363,23 @@ private fun JoinMatchDialog(
 
 @Composable
 private fun HomeActionCard(action: HomeAction, modifier: Modifier = Modifier) {
+    // req: flexible across screen sizes. A hard `.height(100.dp)` clipped/overlapped its own
+    // label on narrower phones or larger system font sizes, where "Resume Match" etc. needs
+    // two lines to fit — the fixed-height Card just cut it off instead of growing. Using a
+    // *minimum* height instead lets the card grow when it truly needs to, while `maxLines` +
+    // `TextOverflow.Ellipsis` guarantee the label itself never overflows the card's edges no
+    // matter how the two combine on a given device.
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .height(100.dp),
+            .heightIn(min = 100.dp),
         colors = CardDefaults.cardColors(containerColor = action.backgroundColor),
         onClick = action.onClick
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -342,7 +393,10 @@ private fun HomeActionCard(action: HomeAction, modifier: Modifier = Modifier) {
             Text(
                 action.label,
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
