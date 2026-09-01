@@ -85,6 +85,9 @@ fun HomeScreen(
             showJoinDialog = false
             viewModel.dismissJoinMatchStatus()
             onOpenMatch(state.matchId)
+        } else if (state is JoinMatchUiState.NeedsTeamSelection) {
+            // Close the code-entry dialog so it doesn't sit stacked behind the team picker.
+            showJoinDialog = false
         }
     }
 
@@ -219,6 +222,49 @@ fun HomeScreen(
             }
         )
     }
+
+    // req #3/#4: after a successful join, ask this device's user which team they're
+    // scoring for before handing off to the Scoring screen.
+    (joinMatchState as? JoinMatchUiState.NeedsTeamSelection)?.let { needsSelection ->
+        SelectYourTeamDialog(
+            teamAName = needsSelection.teamAName,
+            teamBName = needsSelection.teamBName,
+            onSelect = { teamName -> viewModel.confirmJoinTeam(needsSelection.matchId, teamName) }
+        )
+    }
+}
+
+/** req #3/#4: "Keep a button to select from which device who's going to update the score by
+ *  selecting the team" — shown right after a device joins a shared match by code, so the two
+ *  phones agree on which one edits which innings instead of both trying to edit everything. */
+@Composable
+private fun SelectYourTeamDialog(
+    teamAName: String,
+    teamBName: String,
+    onSelect: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { /* must pick a team to continue */ },
+        title = { Text("Which team are you scoring for?") },
+        text = {
+            Text(
+                "This phone will only be able to enter the score while your team is batting. " +
+                    "The other phone stays view-only during that innings, and it'll be the " +
+                    "other way round once the innings switches.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        },
+        confirmButton = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { onSelect(teamAName) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(teamAName)
+                }
+                Button(onClick = { onSelect(teamBName) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(teamBName)
+                }
+            }
+        }
+    )
 }
 
 @Composable

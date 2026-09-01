@@ -16,9 +16,9 @@ class ViewModelFactory(
             modelClass.isAssignableFrom(HomeViewModel::class.java) ->
                 HomeViewModel(repository, appContext) as T
             modelClass.isAssignableFrom(MatchSetupViewModel::class.java) ->
-                MatchSetupViewModel(repository) as T
+                MatchSetupViewModel(repository, appContext) as T
             modelClass.isAssignableFrom(ScoringViewModel::class.java) ->
-                ScoringViewModel(repository) as T
+                ScoringViewModel(repository, appContext) as T
             modelClass.isAssignableFrom(SquadViewModel::class.java) ->
                 SquadViewModel(repository) as T
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")

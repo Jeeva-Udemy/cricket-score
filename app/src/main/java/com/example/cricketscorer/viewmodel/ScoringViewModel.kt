@@ -1,9 +1,12 @@
 package com.example.cricketscorer.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.data.CricketRepository
+import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.model.DismissedEnd
@@ -61,12 +64,65 @@ data class ScoringUiState(
     // Players from the saved squads linked to the live innings, for pick lists (req. #3)
     val battingSquadPlayerNames: List<String> = emptyList(),
     val bowlingSquadPlayerNames: List<String> = emptyList(),
-    // Set to the innings number (currently always 2) right when that innings is created, so
-    // the Scoring screen can pop up a one-time "pick your openers" dialog instead of leaving
-    // the placeholder "Batsman 1 / Batsman 2 / Bowler 1" names in place until the user
-    // remembers to tap Edit. Cleared once the dialog has been confirmed/dismissed.
-    val openingPlayersPromptForInnings: Int? = null
+    // Set to the innings number (currently always 2) right when that innings is created —
+    // kept only as an informational marker now; the actual dialog trigger is the reactive
+    // [showOpeningPlayersPrompt] below (see its doc for why the one-shot flag alone wasn't
+    // enough for Cloud Sync matches).
+    val openingPlayersPromptForInnings: Int? = null,
+    // req #3/#4: which team THIS device is scoring for (local-only, see
+    // DeviceMatchRoleStore). Null for a purely local/unshared match, or a shared match that
+    // was created/joined before this feature existed.
+    val myTeam: String? = null
 ) {
+    /** True once this match has ever been shared (has a Cloud Sync code) — editing is only
+     *  restricted to one device at a time for shared matches; a solo/local match is always
+     *  fully editable from the one device scoring it. */
+    val isSharedMatch: Boolean get() = match?.shareCode != null
+
+    /**
+     * req #3/#4: "Keep a button to select from which device who's going to update the score
+     * ... on the other device they can only view it and can't modify it." One device edits
+     * per innings — whichever one belongs to the team currently BATTING (that device already
+     * enters both its own batsmen and the opposing bowler each ball, so only one side of the
+     * shared match needs write access at a time). The other device's screen is read-only
+     * until it becomes its team's turn to bat in the next innings.
+     *
+     * Fails "open" (editable) when we can't tell — no share code (not shared) or no local
+     * team role recorded yet — so nobody old data / an unfinished setup ever gets silently
+     * locked out.
+     */
+    val canEditScore: Boolean
+        get() {
+            if (!isSharedMatch) return true
+            val team = myTeam ?: return true
+            val battingTeam = currentInnings?.battingTeam ?: return true
+            return battingTeam == team
+        }
+
+    /**
+     * req #2 (2nd innings should prompt for real names, never silently keep "Batsman 1 /
+     * Batsman 2 / Bowler 1"): derived straight from data instead of a one-shot flag.
+     *
+     * The old flag was only ever set on whichever device happened to bowl the last ball of
+     * the previous innings — but for a Cloud Sync match, control of the NEW innings belongs
+     * to the team now batting (see [canEditScore]), which is very often the *other* phone.
+     * That device never had the flag set locally (it only learns about the new innings row
+     * via the synced snapshot), so the popup never appeared anywhere and the placeholders
+     * silently stuck around.
+     *
+     * Deriving it from "is this innings live, can I edit it, and does it still have its
+     * untouched placeholder names with zero balls bowled" fixes that for both devices, and
+     * also works correctly for a purely local/unshared match.
+     */
+    val showOpeningPlayersPrompt: Boolean
+        get() {
+            val inn = currentInnings ?: return false
+            if (!isCurrentInningsLive || !canEditScore) return false
+            if (selectedInningsBallEvents.isNotEmpty()) return false
+            return inn.strikerName == "Batsman 1" &&
+                inn.nonStrikerName == "Batsman 2" &&
+                inn.currentBowlerName == "Bowler 1"
+        }
     val currentInnings: InningsEntity?
         get() {
             if (allInnings.isEmpty()) return null
@@ -293,7 +349,10 @@ data class ScoringUiState(
         }
 }
 
-class ScoringViewModel(private val repository: CricketRepository) : ViewModel() {
+class ScoringViewModel(
+    private val repository: CricketRepository,
+    private val appContext: Context
+) : ViewModel() {
 
     private var matchId: Long = -1
     private var observeJob: Job? = null
@@ -317,6 +376,16 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     private var observedShareCode: String? = null
     private var cloudPushJob: Job? = null
     private var applyingRemoteSnapshot = false
+    // Canonical JSON of the most recent snapshot we RECEIVED from the other device. Compared
+    // against what we're about to push before every push (see scheduleCloudPush) so that the
+    // Room Flow re-emission caused by applying that remote snapshot never gets echoed straight
+    // back to Firestore. This is more robust than relying on the applyingRemoteSnapshot flag
+    // alone: Room's Flow (InvalidationTracker) emits asynchronously on its own dispatcher, so
+    // there's no guarantee that re-emission happens before applyMatchSnapshot's finally block
+    // resets the flag — if it happens after, the flag-only guard misses it, and every write
+    // ping-pongs between the two devices forever (the "constant loading / can't make a next
+    // move / screen jumping tabs" symptom).
+    private var lastRemoteSnapshotJson: String? = null
 
     private val _uiState = MutableStateFlow(ScoringUiState())
     val uiState: StateFlow<ScoringUiState> = _uiState.asStateFlow()
@@ -324,6 +393,8 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     fun loadMatch(matchId: Long, initialInningsId: Long) {
         this.matchId = matchId
         observedInningsIds.clear()
+        val myTeam = DeviceMatchRoleStore.getMyTeam(appContext, matchId)
+        _uiState.value = _uiState.value.copy(myTeam = myTeam)
         observeMatchData()
     }
 
@@ -337,6 +408,9 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 viewModelScope.launch {
                     applyingRemoteSnapshot = true
                     try {
+                        // Recorded BEFORE applying so the guard is in place no matter when
+                        // Room's Flow observers happen to react to the write.
+                        lastRemoteSnapshotJson = BackupSerializer.toJson(snapshot)
                         repository.applyMatchSnapshot(snapshot)
                     } finally {
                         applyingRemoteSnapshot = false
@@ -347,15 +421,27 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
     }
 
     /** Debounced push of the current local state to Firestore so rapid taps (e.g. undo then
-     *  re-score) collapse into one write instead of one per intermediate emission. */
+     *  re-score) collapse into one write instead of one per intermediate emission.
+     *
+     *  Short delay (150ms, down from an earlier 400ms): now that every user action is a
+     *  single atomic DB write (see recordBall/undoBall/finishInningsAtomic above), there's
+     *  no burst of redundant emissions per tap to debounce away — just enough of a window to
+     *  collapse genuinely-rapid double-taps, so the other device sees each ball/undo pushed
+     *  out almost immediately instead of visibly lagging behind. */
     private fun scheduleCloudPush() {
         val shareCode = _uiState.value.match?.shareCode ?: return
         if (applyingRemoteSnapshot) return
         cloudPushJob?.cancel()
         cloudPushJob = viewModelScope.launch {
-            delay(400)
+            delay(150)
             runCatching {
                 val snapshot = repository.getSnapshotForMatch(matchId)
+                val json = BackupSerializer.toJson(snapshot)
+                // We're about to push back out exactly what we just received from the other
+                // device — that's an echo, not a real local change, so skip it. This is what
+                // breaks the infinite apply-remote -> Flow re-emits -> push -> other device
+                // applies -> ... loop at its root, regardless of timing.
+                if (json == lastRemoteSnapshotJson) return@runCatching
                 CloudSync.pushSnapshot(shareCode, snapshot, deviceId)
             }
         }
@@ -611,22 +697,19 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
      * go back to exactly what they were before that ball — including on a wicket,
      * so a run-out recorded against the wrong end (or any other mis-tap) is fixed by
      * a single Undo with no manual "Edit Batsmen" cleanup required afterwards.
+     *
+     * Deletes the ball, restores the innings, and (if needed) reopens the match all in one
+     * atomic transaction (see CricketDao.undoBall) — previously these were separate writes,
+     * so Undo could take two or three visibly separate steps to "settle" both locally and,
+     * once synced, on the other device, instead of updating instantly everywhere.
      */
     fun undoLastBall() {
         viewModelScope.launch {
             val match = repository.getMatch(matchId) ?: return@launch
             val liveInn = fetchLiveInnings() ?: return@launch
-            val inningsId = liveInn.inningsId
-            val lastBall = repository.undoLastBall(inningsId) ?: return@launch
+            val lastBall = repository.getLastBallEvent(liveInn.inningsId) ?: return@launch
 
-            if (match.isCompleted) {
-                repository.updateMatch(match.copy(isCompleted = false, resultSummary = null))
-            }
-
-            // Re-fetch innings after the possible match reopen so we have the latest state,
-            // then restore every mutable field straight from the ball's pre-ball snapshot.
-            val freshInn = fetchLiveInnings() ?: return@launch
-            val restored = freshInn.copy(
+            val restored = liveInn.copy(
                 totalRuns = lastBall.preTotalRuns,
                 wickets = lastBall.preWickets,
                 completedOvers = lastBall.preCompletedOvers,
@@ -643,7 +726,11 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 nextBatsmanNumber = lastBall.preNextBatsmanNumber,
                 isCompleted = lastBall.preIsCompleted
             )
-            repository.updateInnings(restored)
+            val reopenedMatch = if (match.isCompleted) {
+                match.copy(isCompleted = false, resultSummary = null)
+            } else null
+
+            repository.undoBall(lastBall.ballId, restored, reopenedMatch)
         }
     }
 
@@ -710,7 +797,10 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 preIsCompleted = innings.isCompleted,
                 bowlerName = innings.currentBowlerName
             )
-            repository.addBallEvent(ballEvent)
+            // Not written yet — recorded atomically together with the resulting score below
+            // via repository.recordBall(), so a single tap always produces exactly one DB
+            // write/Flow emission instead of two (see CricketDao.recordBall for why the old
+            // "insert ball, then separately update innings" split caused visible stutter).
 
             // 2. Counters
             var newBallsThisOver = innings.ballsThisOver
@@ -795,14 +885,14 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
             val inningsOver = oversUp || allOut || targetChased
 
             if (!inningsOver) {
-                // Save and let the Flow observers update UI automatically
-                repository.updateInnings(updatedInnings)
+                // Atomic: ball audit-log row + resulting score, one write/one Flow emission.
+                repository.recordBall(ballEvent, updatedInnings)
                 return@launch
             }
 
             // Innings complete
             updatedInnings = updatedInnings.copy(isCompleted = true)
-            repository.updateInnings(updatedInnings)
+            repository.recordBall(ballEvent, updatedInnings)
             finishInnings(match, updatedInnings)
         }
     }
@@ -823,15 +913,17 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 bowlingSquadId = completedInnings.battingSquadId,
                 target = completedInnings.totalRuns + 1
             )
-            // createInnings returns the real Room-assigned ID
-            val secondInningsId = repository.createInnings(secondInnings)
-
-            // Fetch back the entity with the proper ID from DB
-            val secondInningsFromDb = repository.getInningsForMatch(matchId)
-                .firstOrNull { it.inningsNumber == 2 } ?: secondInnings.copy(inningsId = secondInningsId)
-
             val updatedMatch = match.copy(currentInningsNumber = 2)
-            repository.updateMatch(updatedMatch)
+
+            // Atomic: 1st-innings-complete + 2nd-innings-create + match-advance, all in one
+            // DB transaction (see CricketDao.finishInningsAtomic). This closes the exact race
+            // the old split-into-3-writes version hit: observers could previously see "2nd
+            // innings exists but match still says innings 1" (or the reverse) for a moment,
+            // which is what made the opener dialog and squad pickers briefly latch onto stale
+            // data right at the innings break.
+            val secondInningsId = repository.finishInningsAtomic(completedInnings, secondInnings, updatedMatch)
+                ?: return
+            val secondInningsFromDb = secondInnings.copy(inningsId = secondInningsId)
 
             // Update state with properly-ID'd 2nd innings
             val allInnings = listOf(completedInnings, secondInningsFromDb)
@@ -840,23 +932,15 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
                 allInnings = allInnings,
                 selectedTabIndex = 1,
                 hasAutoSwitchedToSecondInnings = true,
-                // req #2: prompt for the 2nd innings' opening batsmen + bowler as soon as it
-                // starts, instead of leaving the "Batsman 1 / Batsman 2 / Bowler 1" placeholders
-                // in place until the user remembers to tap Edit.
                 openingPlayersPromptForInnings = secondInningsFromDb.inningsNumber
             )
 
-            // Explicitly resync the batter/bowler squad pickers for the 2nd innings right
-            // now, using the squad IDs we already know are correct (battingSquadId/
-            // bowlingSquadId are swapped for innings 2). Don't rely on the next emission
-            // from observeInningsForMatch's collector to do this: that collector reads
-            // _uiState.value.match?.currentInningsNumber to decide which innings is "live",
-            // and the DB write to the innings table above can trigger that collector to
-            // re-run before repository.updateMatch's own Flow has propagated the new
-            // currentInningsNumber into _uiState. When that race is lost, the collector
-            // resubscribes the pickers to the 1st innings' (unswapped) squads instead, and
-            // since nothing else re-triggers it, the pickers stay wrong for the whole 2nd
-            // innings until a ball is bowled. Setting the ids directly here closes that gap.
+            // Explicitly resync the batter/bowler squad pickers for the 2nd innings right now
+            // using the squad IDs we already know are correct (battingSquadId/bowlingSquadId
+            // are swapped for innings 2), rather than waiting for the next Flow emission to do
+            // it — now that the write above is one atomic transaction there's no in-between
+            // state left for that emission to race against, but setting it directly here still
+            // saves a redundant round trip.
             _lastObservedInningsNumber = secondInningsFromDb.inningsNumber
             observedBattingSquadId = null
             observedBowlingSquadId = null
@@ -866,7 +950,12 @@ class ScoringViewModel(private val repository: CricketRepository) : ViewModel() 
             val allInn = repository.getInningsForMatch(matchId)
             val firstInn = allInn.first { it.inningsNumber == 1 }
             val resultText = buildResultText(firstInn, completedInnings)
-            repository.updateMatch(match.copy(isCompleted = true, resultSummary = resultText))
+            // Atomic: 2nd-innings-complete + match-complete, one write.
+            repository.finishInningsAtomic(
+                completedInnings,
+                null,
+                match.copy(isCompleted = true, resultSummary = resultText)
+            )
             // Let the match observer update matchCompleteMessage automatically
         }
     }

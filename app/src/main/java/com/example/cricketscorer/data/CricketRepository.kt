@@ -35,30 +35,57 @@ class CricketRepository(private val dao: CricketDao) {
     fun observeBallEvents(inningsId: Long): Flow<List<BallEventEntity>> = dao.observeBallEvents(inningsId)
     suspend fun getLastBallEvent(inningsId: Long): BallEventEntity? = dao.getLastBallEvent(inningsId)
 
-    /** Deletes the most recent ball for an innings and returns it so the caller can reverse its score effects. */
-    suspend fun undoLastBall(inningsId: Long): BallEventEntity? {
-        val last = dao.getLastBallEvent(inningsId) ?: return null
-        dao.deleteBallEvent(last.ballId)
-        return last
-    }
+    // ---------- Live scoring: atomic multi-row writes (see CricketDao for why these matter) ----------
+    suspend fun recordBall(ballEvent: BallEventEntity, updatedInnings: InningsEntity) =
+        dao.recordBall(ballEvent, updatedInnings)
+
+    suspend fun undoBall(ballId: Long, restoredInnings: InningsEntity, reopenedMatch: MatchEntity?) =
+        dao.undoBall(ballId, restoredInnings, reopenedMatch)
+
+    suspend fun finishInningsAtomic(
+        completedInnings: InningsEntity,
+        nextInnings: InningsEntity?,
+        updatedMatch: MatchEntity
+    ): Long? = dao.finishInningsAtomic(completedInnings, nextInnings, updatedMatch)
 
     // ---------- Cloud Sync (Firestore) ----------
     // A "live match" mirror is much smaller than the full [BackupSnapshot] above: only the
-    // one match, its innings, and their ball events — never squads/players (those stay
-    // local/per-device) and never other matches, since only the match being actively shared
-    // is written to Firestore. See [com.example.cricketscorer.sync.CloudSync].
+    // one match, its innings, their ball events, and the squads/players actually linked to
+    // this match — never other matches or unrelated squads, since only the match being
+    // actively shared is written to Firestore. See [com.example.cricketscorer.sync.CloudSync].
+    //
+    // Squads/players ARE included (req: "we don't have the squad and team in the 2nd
+    // device") — without them, a device that joins a shared match purely by code has no
+    // player names to offer in the batsman/bowler pickers, since squads used to be treated
+    // as local-only, Drive-backup-only data.
 
     /** Builds the payload pushed to Firestore whenever this match's local data changes. */
     suspend fun getSnapshotForMatch(matchId: Long): BackupSnapshot {
         val match = dao.getMatch(matchId)
         val innings = dao.getInningsForMatch(matchId)
         val ballEvents = innings.flatMap { dao.getBallEventsForInnings(it.inningsId) }
+
+        // Every squad either team was set up from, whether recorded on the match itself
+        // (teamASquadId/teamBSquadId) or on an individual innings (battingSquadId/
+        // bowlingSquadId — these swap between the 1st and 2nd innings) — a superset covers
+        // both without duplicates.
+        val squadIds = buildSet {
+            match?.teamASquadId?.let { add(it) }
+            match?.teamBSquadId?.let { add(it) }
+            innings.forEach { inn ->
+                inn.battingSquadId?.let { add(it) }
+                inn.bowlingSquadId?.let { add(it) }
+            }
+        }
+        val squads = squadIds.mapNotNull { dao.getSquad(it) }
+        val players = squadIds.flatMap { dao.getPlayersForSquad(it) }
+
         return BackupSnapshot(
             matches = listOfNotNull(match),
             innings = innings,
             ballEvents = ballEvents,
-            squads = emptyList(),
-            players = emptyList()
+            squads = squads,
+            players = players
         )
     }
 
@@ -68,14 +95,11 @@ class CricketRepository(private val dao: CricketDao) {
      * other device's (same trick [restoreFromBackup] already uses for Drive resync).
      * Ball events are fully replaced per-innings rather than merged, so a ball undone on the
      * other device disappears here too instead of only ever being added to.
+     *
+     * Applied as a single DB transaction (see [CricketDao.applyLiveMatchSnapshot]) so Room's
+     * Flow observers never see a half-updated state.
      */
-    suspend fun applyMatchSnapshot(snapshot: BackupSnapshot) {
-        snapshot.matches.forEach { dao.restoreMatch(it) }
-        snapshot.innings.forEach { dao.restoreInnings(it) }
-        val inningsIds = snapshot.innings.map { it.inningsId }
-        if (inningsIds.isNotEmpty()) dao.deleteBallEventsForInnings(inningsIds)
-        snapshot.ballEvents.forEach { dao.restoreBallEvent(it) }
-    }
+    suspend fun applyMatchSnapshot(snapshot: BackupSnapshot) = dao.applyLiveMatchSnapshot(snapshot)
 
     // Squads
     suspend fun createSquad(squad: SquadEntity): Long = dao.insertSquad(squad)

@@ -1,11 +1,13 @@
 package com.example.cricketscorer.viewmodel
 
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cricketscorer.data.CricketRepository
+import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.data.PlayerEntity
@@ -18,7 +20,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel() {
+class MatchSetupViewModel(
+    private val repository: CricketRepository,
+    private val appContext: Context
+) : ViewModel() {
 
     var teamAName by mutableStateOf("")
     var teamBName by mutableStateOf("")
@@ -175,6 +180,13 @@ class MatchSetupViewModel(private val repository: CricketRepository) : ViewModel
                 currentBowlerName = openingBowlerName.trim()
             )
             val inningsId = repository.createInnings(firstInnings)
+
+            // req #3/#4: the device that creates the match is, by definition, the one whose
+            // user just filled in Team A's details — record it locally as "Team A's device"
+            // so this phone knows from the start whether it's the one allowed to score the
+            // current innings once a second phone joins via Cloud Sync. (The joining device
+            // picks its own team explicitly — see HomeViewModel.confirmJoinTeam.)
+            DeviceMatchRoleStore.setMyTeam(appContext, matchId, teamA)
 
             // Cloud Sync: every match gets a share code up front so the Scoring screen can
             // show it immediately ("Match Code: XXXXXX") for the other phone to join via

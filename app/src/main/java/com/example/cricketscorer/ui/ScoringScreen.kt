@@ -97,8 +97,14 @@ fun ScoringScreen(
     val allInnings = state.allInnings
 
     // ---- Auto Bowler Selection Dialog Prompt After Every Over ----
-    LaunchedEffect(innings.completedOvers) {
-        if (innings.completedOvers > 0 && innings.ballsThisOver == 0 && state.isCurrentInningsLive) {
+    // req #1/#2: only the device that's actually allowed to edit this innings should ever
+    // see this mandatory popup. Previously it fired on BOTH phones after every over — on the
+    // device that isn't scoring, it had no squad to offer either (see req #3 fix in
+    // CricketRepository.getSnapshotForMatch), so it was an unusable, unmissable dialog.
+    LaunchedEffect(innings.completedOvers, state.canEditScore) {
+        if (innings.completedOvers > 0 && innings.ballsThisOver == 0 &&
+            state.isCurrentInningsLive && state.canEditScore
+        ) {
             isBowlerChangeMandatory = true
             showEditBowlerDialog = true
         }
@@ -119,6 +125,22 @@ fun ScoringScreen(
                             "Match Code: $code",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    // req #3/#4: make it obvious which device currently has the ball, so
+                    // "why can't I enter anything" is never a mystery on the read-only phone.
+                    if (state.isSharedMatch) {
+                        val label = if (state.canEditScore) {
+                            "You're scoring (${state.myTeam ?: "this team"})"
+                        } else {
+                            "View only — ${innings.battingTeam} is scoring"
+                        }
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (state.canEditScore) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error
                         )
                     }
                 }
@@ -171,13 +193,18 @@ fun ScoringScreen(
             0 -> LiveScoreTabContent(
                 viewModel = viewModel,
                 state = state,
-                onEditBatsmen = { showEditBatsmenDialog = true },
-                onEditBowler = { isBowlerChangeMandatory = false; showEditBowlerDialog = true },
-                onWicketClick = { showWicketDialog = true },
-                onExtraClick = { showExtraDialogFor = it },
-                onPenaltyClick = { showPenaltyDialog = true },
-                onCompleteInningsClick = { showCompleteInningsDialog = true },
-                onSetTargetClick = { showSetTargetDialog = true }
+                onEditBatsmen = { if (state.canEditScore) showEditBatsmenDialog = true },
+                onEditBowler = {
+                    if (state.canEditScore) {
+                        isBowlerChangeMandatory = false
+                        showEditBowlerDialog = true
+                    }
+                },
+                onWicketClick = { if (state.canEditScore) showWicketDialog = true },
+                onExtraClick = { if (state.canEditScore) showExtraDialogFor = it },
+                onPenaltyClick = { if (state.canEditScore) showPenaltyDialog = true },
+                onCompleteInningsClick = { if (state.canEditScore) showCompleteInningsDialog = true },
+                onSetTargetClick = { if (state.canEditScore) showSetTargetDialog = true }
             )
             1 -> ScorecardTabContent(state = state)
             2 -> OversTabContent(state = state)
@@ -246,8 +273,10 @@ fun ScoringScreen(
 
     // req #2: when the 2nd innings starts, prompt once for its opening batsmen + bowler
     // instead of leaving the "Batsman 1 / Batsman 2 / Bowler 1" placeholders in place.
-    val openingPromptInningsNumber = state.openingPlayersPromptForInnings
-    if (openingPromptInningsNumber != null && openingPromptInningsNumber == innings.inningsNumber) {
+    // req #2: reactive — shows for whichever device can actually act on it, the moment the
+    // live innings still has its untouched placeholder names, regardless of which device
+    // created that innings row (see ScoringUiState.showOpeningPlayersPrompt).
+    if (state.showOpeningPlayersPrompt) {
         SelectOpeningPlayersDialog(
             battingTeam = innings.battingTeam,
             bowlingTeam = innings.bowlingTeam,
@@ -393,13 +422,40 @@ private fun LiveScoreTabContent(
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("🎉 Match Complete", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(resultMessage, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                        OutlinedButton(onClick = { viewModel.undoLastBall() }) { Text("Undo Last Ball") }
+                        if (state.canEditScore) {
+                            OutlinedButton(onClick = { viewModel.undoLastBall() }) { Text("Undo Last Ball") }
+                        }
                     }
                 }
             } else if (!state.isCurrentInningsLive) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Box(modifier = Modifier.padding(16.dp), contentAlignment = Alignment.Center) {
                         Text("Viewing completed innings — switch tab to score the live innings.")
+                    }
+                }
+            } else if (!state.canEditScore) {
+                // req #3/#4: this device isn't the one scoring the current innings — show
+                // the live numbers (already up top) but no editable controls at all, so
+                // there's nothing to tap that would fight with the other phone.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            "View only",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "${innings.battingTeam} is scoring this innings from their phone. " +
+                                "You'll be able to update the score once ${innings.bowlingTeam} " +
+                                "bats.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             } else {

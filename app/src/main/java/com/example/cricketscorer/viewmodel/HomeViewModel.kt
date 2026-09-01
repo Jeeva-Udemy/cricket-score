@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.backup.DriveBackupManager
 import com.example.cricketscorer.data.CricketRepository
+import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.sync.CloudSync
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -34,6 +35,14 @@ sealed class BackupUiState {
 sealed class JoinMatchUiState {
     object Idle : JoinMatchUiState()
     object Joining : JoinMatchUiState()
+    /** req #3/#4: the match/innings/squads have been pulled down successfully, but we still
+     *  need to ask this device's user which team THEY are scoring for, so the Scoring screen
+     *  can tell the two phones apart and only let one edit at a time. */
+    data class NeedsTeamSelection(
+        val matchId: Long,
+        val teamAName: String,
+        val teamBName: String
+    ) : JoinMatchUiState()
     data class Success(val matchId: Long) : JoinMatchUiState()
     data class Error(val message: String) : JoinMatchUiState()
 }
@@ -256,7 +265,15 @@ class HomeViewModel(
                         return@onSuccess
                     }
                     repository.applyMatchSnapshot(snapshot)
-                    _joinMatchState.value = JoinMatchUiState.Success(match.matchId)
+                    // req #3/#4: ask which team this device is scoring for before handing
+                    // off to the Scoring screen, instead of leaving it unset (which used to
+                    // mean both phones treated themselves as fully editable and stepped on
+                    // each other's changes).
+                    _joinMatchState.value = JoinMatchUiState.NeedsTeamSelection(
+                        matchId = match.matchId,
+                        teamAName = match.teamAName,
+                        teamBName = match.teamBName
+                    )
                 }
                 .onFailure {
                     _joinMatchState.value = JoinMatchUiState.Error(
@@ -264,6 +281,13 @@ class HomeViewModel(
                     )
                 }
         }
+    }
+
+    /** Called once the user picks which team they're scoring for on THIS device, from the
+     *  NeedsTeamSelection prompt. */
+    fun confirmJoinTeam(matchId: Long, teamName: String) {
+        DeviceMatchRoleStore.setMyTeam(appContext, matchId, teamName)
+        _joinMatchState.value = JoinMatchUiState.Success(matchId)
     }
 
     fun dismissJoinMatchStatus() {

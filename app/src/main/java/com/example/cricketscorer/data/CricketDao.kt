@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -155,4 +156,81 @@ interface CricketDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun restorePlayer(player: PlayerEntity)
+
+    // ---------- Cloud Sync: apply a live snapshot from the other device ----------
+
+    /**
+     * Applies an entire remote [BackupSnapshot] (match + innings + ball events + the squads
+     * needed to score it) as ONE atomic transaction instead of a sequence of separate
+     * inserts/deletes.
+     *
+     * This matters a lot for the "constant flickering / jumping tabs" bug: previously the
+     * match row, each innings row, and the full delete-then-reinsert of ball events were
+     * separate statements, so Room's Flow-based observers (observeMatch/observeInningsForMatch/
+     * observeBallEvents) could each fire on the half-applied state in between them — e.g. after
+     * the ball events for an innings were deleted but before they were reinserted, or after the
+     * 2nd innings row was restored but before currentInningsNumber was updated on the match row.
+     * Wrapping the whole thing in @Transaction means every observer sees one clean "before" or
+     * "after" state, never anything in between.
+     */
+    @Transaction
+    suspend fun applyLiveMatchSnapshot(snapshot: BackupSnapshot) {
+        snapshot.matches.forEach { restoreMatch(it) }
+        snapshot.squads.forEach { restoreSquad(it) }
+        snapshot.players.forEach { restorePlayer(it) }
+        snapshot.innings.forEach { restoreInnings(it) }
+        val inningsIds = snapshot.innings.map { it.inningsId }
+        if (inningsIds.isNotEmpty()) deleteBallEventsForInnings(inningsIds)
+        snapshot.ballEvents.forEach { restoreBallEvent(it) }
+    }
+
+    // ---------- Live scoring: atomic multi-row writes ----------
+    // Each of these bundles what used to be 2-3 separate DAO calls from ScoringViewModel into
+    // one @Transaction. That matters a lot for how responsive scoring feels: Room's Flow-based
+    // observers (observeInningsForMatch/observeMatch/observeBallEvents) re-emit on every single
+    // write, so a "single tap" that used to be 2 separate writes fired 2 separate emissions —
+    // one with the new ball but the old score, then another moments later with the corrected
+    // score — which Compose renders as a visible stutter/revert, and which every device sharing
+    // the match also had to sync through (and could easily observe mid-glitch). Collapsing each
+    // user action into exactly one atomic write means exactly one clean emission, locally and
+    // once synced.
+
+    /** Appends the ball's audit-log row and applies its resulting score to the innings, atomically. */
+    @Transaction
+    suspend fun recordBall(ballEvent: BallEventEntity, updatedInnings: InningsEntity) {
+        insertBallEvent(ballEvent)
+        updateInnings(updatedInnings)
+    }
+
+    /** Deletes the last ball's audit-log row, restores the innings to its pre-ball state, and
+     *  (if that ball had just completed the match) reopens the match — atomically. */
+    @Transaction
+    suspend fun undoBall(ballId: Long, restoredInnings: InningsEntity, reopenedMatch: MatchEntity?) {
+        deleteBallEvent(ballId)
+        updateInnings(restoredInnings)
+        reopenedMatch?.let { updateMatch(it) }
+    }
+
+    /**
+     * Wraps up an innings: marks it completed and, in the same transaction, either creates the
+     * next innings and advances the match onto it, or marks the whole match complete. Returns
+     * the newly-created innings' Room-assigned id (null when the match just ended instead).
+     *
+     * Doing this atomically closes the exact race the old (non-atomic) version of this logic
+     * used to hit: the innings-complete write and the match/next-innings write used to be
+     * separate, so the "2nd innings exists but match.currentInningsNumber still says 1" (or vice
+     * versa) in-between state was directly observable — that's what made the opener-picker and
+     * squad lists briefly latch onto the wrong innings right at the innings break.
+     */
+    @Transaction
+    suspend fun finishInningsAtomic(
+        completedInnings: InningsEntity,
+        nextInnings: InningsEntity?,
+        updatedMatch: MatchEntity
+    ): Long? {
+        updateInnings(completedInnings)
+        val nextInningsId = nextInnings?.let { insertInnings(it) }
+        updateMatch(updatedMatch)
+        return nextInningsId
+    }
 }
