@@ -3,7 +3,7 @@ package com.example.cricketscorer.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.cricketscorer.backup.BackupSerializer
+import com.example.cricketscorer.data.BackupSnapshot
 import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.data.CloudDeviceIdStore
 import com.example.cricketscorer.data.CricketRepository
@@ -382,16 +382,27 @@ class ScoringViewModel(
     private var observedShareCode: String? = null
     private var cloudPushJob: Job? = null
     private var applyingRemoteSnapshot = false
-    // Canonical JSON of the most recent snapshot we RECEIVED from the other device. Compared
-    // against what we're about to push before every push (see scheduleCloudPush) so that the
-    // Room Flow re-emission caused by applying that remote snapshot never gets echoed straight
-    // back to Firestore. This is more robust than relying on the applyingRemoteSnapshot flag
-    // alone: Room's Flow (InvalidationTracker) emits asynchronously on its own dispatcher, so
-    // there's no guarantee that re-emission happens before applyMatchSnapshot's finally block
-    // resets the flag — if it happens after, the flag-only guard misses it, and every write
-    // ping-pongs between the two devices forever (the "constant loading / can't make a next
-    // move / screen jumping tabs" symptom).
-    private var lastRemoteSnapshotJson: String? = null
+    // The most recent snapshot we RECEIVED from the other device (the actual data object, NOT
+    // a serialized string — see below). Compared against what we're about to push before every
+    // push (see scheduleCloudPush) so that the Room Flow re-emission caused by applying that
+    // remote snapshot never gets echoed straight back to Firestore. This is more robust than
+    // relying on the applyingRemoteSnapshot flag alone: Room's Flow (InvalidationTracker) emits
+    // asynchronously on its own dispatcher, so there's no guarantee that re-emission happens
+    // before applyMatchSnapshot's finally block resets the flag — if it happens after, the
+    // flag-only guard misses it, and every write ping-pongs between the two devices forever
+    // (the "constant loading / can't make a next move / screen jumping tabs" symptom, and also
+    // what causes a freshly-entered ball or bowler change on THIS device to appear to "undo
+    // itself": the other device echoes back the very state we just sent it, and if we've since
+    // moved on to the next ball, applying that echo overwrites it).
+    //
+    // MUST compare the data objects (BackupSnapshot / MatchEntity / InningsEntity / etc. are
+    // all Kotlin data classes, so `==` is a real structural/content comparison) rather than
+    // BackupSerializer.toJson() strings — toJson() stamps a fresh `exportedAt =
+    // System.currentTimeMillis()` into the output on every single call, so two JSON strings
+    // built from identical underlying data are NEVER equal. That silently defeated this guard
+    // entirely and was the dominant remaining cause of reverted balls/bowler picks even after
+    // deviceId was made stable.
+    private var lastRemoteSnapshot: BackupSnapshot? = null
 
     private val _uiState = MutableStateFlow(ScoringUiState())
     val uiState: StateFlow<ScoringUiState> = _uiState.asStateFlow()
@@ -416,7 +427,7 @@ class ScoringViewModel(
                     try {
                         // Recorded BEFORE applying so the guard is in place no matter when
                         // Room's Flow observers happen to react to the write.
-                        lastRemoteSnapshotJson = BackupSerializer.toJson(snapshot)
+                        lastRemoteSnapshot = snapshot
                         repository.applyMatchSnapshot(snapshot)
                     } finally {
                         applyingRemoteSnapshot = false
@@ -442,12 +453,12 @@ class ScoringViewModel(
             delay(150)
             runCatching {
                 val snapshot = repository.getSnapshotForMatch(matchId)
-                val json = BackupSerializer.toJson(snapshot)
                 // We're about to push back out exactly what we just received from the other
                 // device — that's an echo, not a real local change, so skip it. This is what
                 // breaks the infinite apply-remote -> Flow re-emits -> push -> other device
-                // applies -> ... loop at its root, regardless of timing.
-                if (json == lastRemoteSnapshotJson) return@runCatching
+                // applies -> ... loop at its root, regardless of timing. Structural equality
+                // (data class ==), not a serialized-string comparison — see lastRemoteSnapshot.
+                if (snapshot == lastRemoteSnapshot) return@runCatching
                 CloudSync.pushSnapshot(shareCode, snapshot, deviceId)
             }
         }
