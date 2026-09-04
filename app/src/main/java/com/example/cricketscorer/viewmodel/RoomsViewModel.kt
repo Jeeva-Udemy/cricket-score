@@ -3,11 +3,14 @@ package com.example.cricketscorer.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.data.CloudDeviceIdStore
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.DeviceMatchRoleStore
+import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.data.RoomStore
+import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.example.cricketscorer.sync.CloudSync
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.flow.Flow
@@ -92,12 +95,42 @@ class RoomsViewModel(
     fun isActiveRoom(roomCode: String): Boolean =
         RoomStore.getActiveRoom(appContext)?.roomCode == roomCode
 
+    /** req: "For each match we need to show who's the Player of the Match." Computed on demand
+     *  from that match's own ball events — see [PlayerStatsCalculator]. Null for a match with
+     *  no balls recorded, or one that isn't completed yet. */
+    suspend fun playerOfTheMatch(match: MatchEntity): PlayerStatsCalculator.PlayerAward? {
+        if (!match.isCompleted) return null
+        val snapshot = repository.getSnapshotForMatch(match.matchId)
+        return PlayerStatsCalculator.computePlayerOfTheMatch(match, snapshot.innings, snapshot.ballEvents)
+    }
+
+    /** req: "If we are playing multiple matches in a single room then we need to show who's
+     *  the Player of the series." Only meaningful once at least two matches in the room have
+     *  actually finished — otherwise there's nothing to compare yet. */
+    suspend fun playerOfTheSeries(roomMatches: List<MatchEntity>): PlayerStatsCalculator.PlayerAward? {
+        val completed = roomMatches.filter { it.isCompleted }
+        if (completed.size < 2) return null
+        val innings = mutableListOf<InningsEntity>()
+        val ballEvents = mutableListOf<BallEventEntity>()
+        completed.forEach { match ->
+            val snapshot = repository.getSnapshotForMatch(match.matchId)
+            innings += snapshot.innings
+            ballEvents += snapshot.ballEvents
+        }
+        return PlayerStatsCalculator.computePlayerOfTheSeries(completed, innings, ballEvents)
+    }
+
     /** Picks back up an already-joined room on this ViewModel's construction, so the user
      *  doesn't have to re-enter the code every time they come back to the Rooms screen. */
     private fun restoreActiveRoomIfAny() {
         val active = RoomStore.getActiveRoom(appContext) ?: return
         _roomState.value = RoomUiState.InRoom(active.roomCode, active.slot, devicesConnected = 1)
-        attachRoomListener(active.roomCode, active.slot)
+        // Belt-and-suspenders: attachRoomListener() calls straight into Firestore
+        // synchronously (addSnapshotListener). This runs from init{} on every navigation into
+        // Rooms/Room Detail, so a runtime hiccup there (e.g. Play Services not ready yet) must
+        // never be allowed to throw out of a ViewModel constructor again — that's exactly the
+        // class of bug that used to crash Home/Match History (see this class's header comment).
+        runCatching { attachRoomListener(active.roomCode, active.slot) }
         viewModelScope.launch {
             runCatching { CloudSync.fetchRoom(active.roomCode) }
                 .onSuccess { info -> if (info != null) applyRoomInfo(active.roomCode, active.slot, info) }

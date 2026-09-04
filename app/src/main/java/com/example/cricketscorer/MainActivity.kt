@@ -18,12 +18,15 @@ import com.example.cricketscorer.ui.ComingSoonScreen
 import com.example.cricketscorer.ui.HomeScreen
 import com.example.cricketscorer.ui.MatchHistoryScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
+import com.example.cricketscorer.ui.PlayerStatsScreen
+import com.example.cricketscorer.ui.RankingsScreen
 import com.example.cricketscorer.ui.RoomDetailScreen
 import com.example.cricketscorer.ui.RoomsScreen
 import com.example.cricketscorer.ui.ScoringScreen
 import com.example.cricketscorer.ui.SquadScreen
 import com.example.cricketscorer.viewmodel.HomeViewModel
 import com.example.cricketscorer.viewmodel.MatchSetupViewModel
+import com.example.cricketscorer.viewmodel.PlayerStatsViewModel
 import com.example.cricketscorer.viewmodel.RoomsViewModel
 import com.example.cricketscorer.viewmodel.ScoringViewModel
 import com.example.cricketscorer.viewmodel.SquadViewModel
@@ -101,11 +104,19 @@ fun CricketNavHost(factory: ViewModelFactory) {
         }
 
         composable("playerStats") {
-            ComingSoonScreen(title = "Player Stats", onNavigateBack = { navController.popBackStack() })
+            val playerStatsViewModel: PlayerStatsViewModel = viewModel(factory = factory)
+            PlayerStatsScreen(
+                viewModel = playerStatsViewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
         }
 
         composable("rankings") {
-            ComingSoonScreen(title = "Rankings", onNavigateBack = { navController.popBackStack() })
+            val playerStatsViewModel: PlayerStatsViewModel = viewModel(factory = factory)
+            RankingsScreen(
+                viewModel = playerStatsViewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
         }
 
         composable("tournaments") {

@@ -8,6 +8,7 @@ import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.backup.DriveBackupManager
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
@@ -106,6 +107,16 @@ class HomeViewModel(
             repository.deleteMatches(idsToDelete)
             _selectedMatchIds.value = emptySet()
         }
+    }
+
+    /** req: "For each match we need to show who's the Player of the Match" — computed on
+     *  demand from that one match's ball events (see [PlayerStatsCalculator]), not persisted,
+     *  so Match History always reflects the latest scored state. Null for a match with no
+     *  balls recorded yet, or one that isn't completed. */
+    suspend fun playerOfTheMatch(match: MatchEntity): PlayerStatsCalculator.PlayerAward? {
+        if (!match.isCompleted) return null
+        val snapshot = repository.getSnapshotForMatch(match.matchId)
+        return PlayerStatsCalculator.computePlayerOfTheMatch(match, snapshot.innings, snapshot.ballEvents)
     }
 
     // ---------- Backup & Resync ----------

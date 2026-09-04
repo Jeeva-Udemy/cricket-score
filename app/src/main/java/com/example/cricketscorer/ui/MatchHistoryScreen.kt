@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.example.cricketscorer.viewmodel.HomeViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -133,6 +135,7 @@ fun MatchHistoryScreen(
                         match = match,
                         isSelected = isSelected,
                         isSelectionMode = isSelectionMode,
+                        onFetchPlayerOfTheMatch = { viewModel.playerOfTheMatch(match) },
                         onClick = {
                             if (isSelectionMode) {
                                 viewModel.toggleMatchSelection(match.matchId)
@@ -185,12 +188,23 @@ private fun MatchHistoryCard(
     match: MatchEntity,
     isSelected: Boolean,
     isSelectionMode: Boolean,
+    onFetchPlayerOfTheMatch: suspend () -> PlayerStatsCalculator.PlayerAward?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onCheckedChange: (Boolean) -> Unit
 ) {
     val dateFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
     val dateStr = dateFormat.format(Date(match.createdAt))
+
+    // req: "For each match we need to show who's the Player of the Match" — computed on demand
+    // (see HomeViewModel.playerOfTheMatch) rather than stored, so it can never go stale after
+    // an Undo. Only worth asking for once the match is actually done.
+    var playerOfTheMatch by remember(match.matchId) {
+        mutableStateOf<PlayerStatsCalculator.PlayerAward?>(null)
+    }
+    LaunchedEffect(match.matchId, match.isCompleted) {
+        playerOfTheMatch = if (match.isCompleted) onFetchPlayerOfTheMatch() else null
+    }
 
     Card(
         modifier = Modifier
@@ -252,7 +266,24 @@ private fun MatchHistoryCard(
                     fontWeight = FontWeight.SemiBold,
                     color = if (match.isCompleted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                 )
+
+                playerOfTheMatch?.let { award ->
+                    Text(
+                        text = "Player of the Match: ${award.playerName} (${formatAward(award)})",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }
+}
+
+/** Shared formatting for a Player of the Match / Player of the Series line, e.g.
+ *  "45 (32) & 2/15" or just "45 (32)" for a pure batting performance. */
+internal fun formatAward(award: PlayerStatsCalculator.PlayerAward): String {
+    val battingPart = if (award.ballsFaced > 0) "${award.runs} (${award.ballsFaced})" else null
+    val bowlingPart = if (award.ballsBowled > 0) "${award.wickets}/${award.runsConceded}" else null
+    return listOfNotNull(battingPart, bowlingPart).joinToString(" & ").ifBlank { "${award.runs} runs" }
 }

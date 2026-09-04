@@ -67,13 +67,21 @@ fun RoomsScreen(
     val roomState by viewModel.roomState.collectAsState()
     var showJoinDialog by remember { mutableStateOf(false) }
 
-    // Once a create/join call resolves into InRoom, jump straight into that room's detail
-    // screen — no reason to make the user tap it again from the list they just landed on.
-    var handledRoomCode by remember { mutableStateOf<String?>(null) }
+    // Jump straight into a room's detail screen once a CREATE/JOIN call this user just made
+    // resolves into InRoom — no reason to make them tap it again from the list they're already
+    // looking at. This must NOT fire just because the ViewModel restores an already-active room
+    // on construction (see RoomsViewModel.restoreActiveRoomIfAny, which runs before this
+    // screen's first composition) — that used to auto-navigate into Room Detail the instant you
+    // opened Rooms while already in a room, silently pushing an extra back-stack entry
+    // ([home, rooms, roomDetail]) the user never chose to visit. Pressing the back arrow then
+    // only returned to the Rooms list they don't remember seeing, not Home — which is exactly
+    // the "back button doesn't get me to Home" symptom this flag fixes: auto-navigation only
+    // ever fires right after this screen itself calls createRoom()/joinRoomByCode() below.
+    var awaitingRoomResult by remember { mutableStateOf(false) }
     LaunchedEffect(roomState) {
         val inRoom = roomState as? RoomUiState.InRoom ?: return@LaunchedEffect
-        if (handledRoomCode != inRoom.roomCode) {
-            handledRoomCode = inRoom.roomCode
+        if (awaitingRoomResult) {
+            awaitingRoomResult = false
             showJoinDialog = false
             onOpenRoom(inRoom.roomCode)
         }
@@ -151,8 +159,14 @@ fun RoomsScreen(
     if (showJoinDialog) {
         CreateOrJoinRoomDialog(
             roomState = roomState,
-            onCreateRoom = { viewModel.createRoom() },
-            onJoinRoom = { code -> viewModel.joinRoomByCode(code) },
+            onCreateRoom = {
+                awaitingRoomResult = true
+                viewModel.createRoom()
+            },
+            onJoinRoom = { code ->
+                awaitingRoomResult = true
+                viewModel.joinRoomByCode(code)
+            },
             onDismiss = { showJoinDialog = false },
             onDismissError = { viewModel.dismissRoomError() }
         )

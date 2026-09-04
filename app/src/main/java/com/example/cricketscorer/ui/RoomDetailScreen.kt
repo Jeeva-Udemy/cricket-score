@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.example.cricketscorer.viewmodel.RoomUiState
 import com.example.cricketscorer.viewmodel.RoomsViewModel
 import java.text.SimpleDateFormat
@@ -66,6 +68,15 @@ fun RoomDetailScreen(
     val matches by remember(roomCode) { viewModel.matchesForRoom(roomCode) }
         .collectAsState(initial = emptyList())
     var showExitDialog by remember { mutableStateOf(false) }
+
+    // req: "If we are playing multiple matches in a single room then we need to show who's the
+    // Player of the series" — only meaningful once 2+ matches in this room have finished.
+    var playerOfTheSeries by remember(roomCode) {
+        mutableStateOf<PlayerStatsCalculator.PlayerAward?>(null)
+    }
+    LaunchedEffect(matches) {
+        playerOfTheSeries = viewModel.playerOfTheSeries(matches)
+    }
 
     Scaffold(
         topBar = {
@@ -127,6 +138,29 @@ fun RoomDetailScreen(
                 }
             }
 
+            playerOfTheSeries?.let { award ->
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                "Player of the Series",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                "${award.playerName} — ${formatAward(award)}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+
             item {
                 Divider()
                 Text(
@@ -152,7 +186,11 @@ fun RoomDetailScreen(
                 }
             } else {
                 items(matches, key = { it.matchId }) { match ->
-                    RoomMatchCard(match = match, onClick = { onOpenMatch(match.matchId) })
+                    RoomMatchCard(
+                        match = match,
+                        onFetchPlayerOfTheMatch = { viewModel.playerOfTheMatch(match) },
+                        onClick = { onOpenMatch(match.matchId) }
+                    )
                 }
             }
         }
@@ -227,8 +265,22 @@ private fun RoomShareCard(roomCode: String, devicesConnected: Int?) {
 }
 
 @Composable
-private fun RoomMatchCard(match: MatchEntity, onClick: () -> Unit) {
+private fun RoomMatchCard(
+    match: MatchEntity,
+    onFetchPlayerOfTheMatch: suspend () -> PlayerStatsCalculator.PlayerAward?,
+    onClick: () -> Unit
+) {
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
+
+    // req: "For each match we need to show who's the Player of the Match" — computed on demand
+    // (see RoomsViewModel.playerOfTheMatch), never persisted, so an Undo can never make it stale.
+    var playerOfTheMatch by remember(match.matchId) {
+        mutableStateOf<PlayerStatsCalculator.PlayerAward?>(null)
+    }
+    LaunchedEffect(match.matchId, match.isCompleted) {
+        playerOfTheMatch = if (match.isCompleted) onFetchPlayerOfTheMatch() else null
+    }
+
     Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Column(
             modifier = Modifier
@@ -264,6 +316,14 @@ private fun RoomMatchCard(match: MatchEntity, onClick: () -> Unit) {
                 fontWeight = FontWeight.SemiBold,
                 color = if (match.isCompleted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
             )
+            playerOfTheMatch?.let { award ->
+                Text(
+                    "Player of the Match: ${award.playerName} (${formatAward(award)})",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
     }
 }
