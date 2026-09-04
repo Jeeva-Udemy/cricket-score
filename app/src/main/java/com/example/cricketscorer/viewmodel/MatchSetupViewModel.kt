@@ -12,6 +12,7 @@ import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.data.PlayerEntity
+import com.example.cricketscorer.data.RoomStore
 import com.example.cricketscorer.data.SquadEntity
 import com.example.cricketscorer.model.TossDecision
 import com.example.cricketscorer.sync.CloudSync
@@ -24,6 +25,18 @@ class MatchSetupViewModel(
     private val repository: CricketRepository,
     private val appContext: Context
 ) : ViewModel() {
+
+    // Rooms: if this device is currently in a room, this match is being created *for* that
+    // room — it reuses the room's code instead of generating a fresh one (req: play several
+    // matches back-to-back in the same room), and the user must say which team they're
+    // scoring for below instead of it being silently assumed (see [scoringTeam]).
+    private val activeRoom = RoomStore.getActiveRoom(appContext)
+    val activeRoomCode: String? = activeRoom?.roomCode
+
+    // req: "select who's going to update the score for the 1st innings while creating the
+    // match itself" — which team THIS device will score for. Only meaningful (and shown in
+    // the UI) when [activeRoomCode] != null; a purely local match has only one device anyway.
+    var scoringTeam by mutableStateOf<String?>(null)
 
     var teamAName by mutableStateOf("")
     var teamBName by mutableStateOf("")
@@ -129,6 +142,12 @@ class MatchSetupViewModel(
             errorMessage = "Select or enter the opening bowler's name."
             return
         }
+        // req: when creating a match inside a Room, the user must explicitly say which team
+        // THIS device is scoring the 1st innings for — no silent default to Team A.
+        if (activeRoomCode != null && scoringTeam == null) {
+            errorMessage = "Select which team you're scoring for."
+            return
+        }
         errorMessage = null
 
         val teamA = teamAName.trim()
@@ -181,29 +200,34 @@ class MatchSetupViewModel(
             )
             val inningsId = repository.createInnings(firstInnings)
 
-            // req #3/#4: the device that creates the match is, by definition, the one whose
-            // user just filled in Team A's details — record it locally as "Team A's device"
-            // so this phone knows from the start whether it's the one allowed to score the
-            // current innings once a second phone joins via Cloud Sync. (The joining device
-            // picks its own team explicitly — see HomeViewModel.confirmJoinTeam.)
-            DeviceMatchRoleStore.setMyTeam(appContext, matchId, teamA)
+            // req: only matches created inside a Room are shared live between two phones now
+            // — Rooms replace the old "every match gets a share code" per-match sharing (see
+            // SYNC_SETUP.md). A match created with no active room stays purely local/offline.
+            val room = activeRoom
+            if (room != null && activeRoomCode != null) {
+                // req: which team THIS device scores the 1st innings for, chosen explicitly
+                // above instead of always assuming Team A — the OTHER device in the room
+                // learns it's scoring for whichever team is left over (see setSlotTeams /
+                // HomeViewModel.attachRoomListener), no separate prompt needed on that phone.
+                val myScoringTeam = scoringTeam ?: teamA
+                val otherTeam = if (myScoringTeam == teamA) teamB else teamA
 
-            // Cloud Sync: every match gets a share code up front so the Scoring screen can
-            // show it immediately ("Match Code: XXXXXX") for the other phone to join via
-            // Home > Join Shared Match. Best-effort — if there's no network or Firebase
-            // isn't configured yet (see SYNC_SETUP.md), the initial push fails and we
-            // simply leave the match without a share code; scoring still works purely
-            // locally either way, ScoringViewModel only tries to sync when shareCode != null.
-            runCatching {
-                val code = CloudSync.generateShareCode()
-                val matchWithCode = match.copy(matchId = matchId, shareCode = code)
-                val snapshot = repository.getSnapshotForMatch(matchId).copy(matches = listOf(matchWithCode))
-                // Must use the SAME stable per-device id that ScoringViewModel's listener will
-                // use once it attaches for this match — otherwise this device won't recognize
-                // this very first push as "self" and will replay it back over the first balls
-                // scored, reverting them. See CloudDeviceIdStore.
-                CloudSync.pushSnapshot(code, snapshot, deviceId = CloudDeviceIdStore.getDeviceId(appContext))
-                repository.updateMatch(matchWithCode)
+                // Best-effort — if there's no network, the initial push fails and we simply
+                // leave the match without a share code; scoring still works purely locally
+                // either way, ScoringViewModel only tries to sync when shareCode != null.
+                runCatching {
+                    val matchWithCode = match.copy(matchId = matchId, shareCode = activeRoomCode)
+                    val snapshot = repository.getSnapshotForMatch(matchId).copy(matches = listOf(matchWithCode))
+                    // Must use the SAME stable per-device id that ScoringViewModel's listener
+                    // will use once it attaches for this match — otherwise this device won't
+                    // recognize this very first push as "self" and will replay it back over
+                    // the first balls scored, reverting them. See CloudDeviceIdStore.
+                    val deviceId = CloudDeviceIdStore.getDeviceId(appContext)
+                    CloudSync.pushSnapshot(activeRoomCode, snapshot, deviceId = deviceId)
+                    repository.updateMatch(matchWithCode)
+                    CloudSync.setSlotTeams(activeRoomCode, room.slot, myScoringTeam, otherTeam)
+                }
+                DeviceMatchRoleStore.setMyTeam(appContext, matchId, myScoringTeam)
             }
 
             onCreated(matchId, inningsId)

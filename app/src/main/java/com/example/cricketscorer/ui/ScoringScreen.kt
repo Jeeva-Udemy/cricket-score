@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
@@ -91,6 +92,10 @@ fun ScoringScreen(
     // req: QR code option (alongside the plain text code) so the other phone can join by
     // scanning instead of typing the 6-character Match Code.
     var showShareQrDialog by remember { mutableStateOf(false) }
+    // req: an Exit button reachable from here — the emergency case where whoever is holding
+    // the phone that's scoring has to leave the ground mid-match and hand off to another
+    // device.
+    var showExitRoomDialog by remember { mutableStateOf(false) }
 
     if (state.isLoading || state.match == null || state.currentInnings == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -123,9 +128,9 @@ fun ScoringScreen(
             title = {
                 Column {
                     Text("${innings.battingTeam} vs ${innings.bowlingTeam}")
-                    // Cloud Sync: show the join code so it can be read/shared to the other
-                    // phone (Home > Join Shared Match). Absent only if the initial push to
-                    // Firestore failed (e.g. no network) when the match was created.
+                    // Cloud Sync: show the room's code so it can be read/shared to the other
+                    // phone (Home > Room). Absent only if the initial push to Firestore
+                    // failed (e.g. no network) when the match was created.
                     state.match?.shareCode?.let { code ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -144,6 +149,20 @@ fun ScoringScreen(
                                     contentDescription = "Show QR code to join this match",
                                     modifier = Modifier.height(16.dp)
                                 )
+                            }
+                            // req: an Exit button reachable from here — e.g. the device
+                            // scoring the match has to leave the ground mid-match.
+                            if (viewModel.isActiveRoomMatch(code)) {
+                                IconButton(
+                                    onClick = { showExitRoomDialog = true },
+                                    modifier = Modifier.height(20.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ExitToApp,
+                                        contentDescription = "Exit room",
+                                        modifier = Modifier.height(16.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -236,6 +255,34 @@ fun ScoringScreen(
         state.match?.shareCode?.let { code ->
             ShareMatchQrDialog(code = code, onDismiss = { showShareQrDialog = false })
         }
+    }
+
+    // req: "an Exit button to exit from the room" — reachable right from the Scoring screen
+    // for the "had to leave the ground" case.
+    if (showExitRoomDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitRoomDialog = false },
+            title = { Text("Exit room?") },
+            text = {
+                Text(
+                    "You'll stop scoring for this room on this phone. The other device can " +
+                        "stay in the room, and a different phone can take your place.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.exitRoom()
+                    showExitRoomDialog = false
+                    onNavigateBack()
+                }) {
+                    Text("Exit Room")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitRoomDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 
     showExtraDialogFor?.let { extraType ->
@@ -1144,7 +1191,7 @@ private fun WicketDialog(
  * req: "Keep a QR code and scan option as well to join the match along with manually
  * entering the code." — shown from the tappable QR icon next to "Match Code: XXXXXX" on the
  * scoring device, so the other phone can just point its camera at this instead of typing the
- * 6 characters in by hand (Home > Join Shared Match > Scan QR Code).
+ * 6 characters in by hand (Home > Room > Scan Room Code).
  */
 @Composable
 private fun ShareMatchQrDialog(code: String, onDismiss: () -> Unit) {
@@ -1160,7 +1207,7 @@ private fun ShareMatchQrDialog(code: String, onDismiss: () -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    "On the other phone: Home → Join Shared Match → Scan QR Code.",
+                    "On the other phone: Home → Room → Scan Room Code.",
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()

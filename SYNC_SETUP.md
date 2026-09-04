@@ -1,12 +1,16 @@
 # Cloud Sync (Mobile1 + Mobile2, TeamA + TeamB) — Setup
 
-This lets two phones score the **same match** together: whoever starts the match gets a
-6-character **Match Code**; the other phone enters it via **Home > Join Shared Match**. From
-then on, every ball either phone enters is mirrored to the other in real time via Cloud
-Firestore.
+This lets two phones score the **same match(es)** together via a **Room**: one phone creates a
+room and gets a 6-character **Room Code**; the other phone enters it via **Home > Room > Join
+Room**. From then on, every ball either phone enters is mirrored to the other in real time via
+Cloud Firestore — and because the code belongs to the *room* rather than to one match, the
+same two phones can start match after match in it (req: "3 to 5 matches in the same day with
+the same squad") without sharing a new code every time. At most two devices may hold the
+room's two slots at once (one per team); either phone can tap **Exit Room** to free its slot
+so a replacement device can join.
 
-The code already in this repo (`sync/CloudSync.kt`, plus the small hooks in
-`MatchSetupViewModel`, `ScoringViewModel`, `HomeViewModel`/`HomeScreen`, and
+The code already in this repo (`sync/CloudSync.kt`, `data/RoomStore.kt`, plus the small hooks
+in `MatchSetupViewModel`, `ScoringViewModel`, `HomeViewModel`/`HomeScreen`, and
 `CricketRepository`) is complete and will build as-is — but it talks to a **placeholder**
 Firebase project (`app/google-services.json`), so syncing will silently fail (the app just
 behaves as fully local/offline) until you point it at a real Firebase project. That's a
@@ -37,7 +41,7 @@ done this step — it has no real credentials in it.)
 
 ## 4. Security rules
 
-This app has no login — the "password" for a match is simply knowing its random 6-character
+This app has no login — the "password" for a room is simply knowing its random 6-character
 code, similar to a Google Meet/Zoom link. `firestore.rules` (included in this repo) reflects
 that:
 
@@ -45,7 +49,10 @@ that:
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /liveMatches/{shareCode} {
+    match /liveMatches/{roomCode} {
+      allow read, write: if true;
+    }
+    match /rooms/{roomCode} {
       allow read, write: if true;
     }
     match /{document=**} {
@@ -55,27 +62,34 @@ service cloud.firestore {
 }
 ```
 
-Paste it into **Firestore Database > Rules** in the console and click **Publish**. Every
-match document lives under `liveMatches/{shareCode}` and holds one JSON blob of that match's
-score state (same format as the existing Google Drive backup feature) — nothing else in your
-project is reachable.
+Paste it into **Firestore Database > Rules** in the console and click **Publish**. Every room's
+*current* match lives under `liveMatches/{roomCode}` and holds one JSON blob of that match's
+score state (same format as the existing Google Drive backup feature); `rooms/{roomCode}`
+holds just the room's two device slots and which team each is scoring for — nothing else in
+your project is reachable. The "only 2 devices per room" limit is enforced by the app when
+joining, not by these rules (matching the rest of this app's no-auth model) — see
+`CloudSync.joinRoom`.
 
-Note: because codes aren't ever expired or deleted automatically, `liveMatches` will
-accumulate old finished matches over time. For a personal/team project this is harmless (each
-doc is a few KB), but if you want it tidy, add a scheduled Cloud Function that deletes
-documents whose `updatedAt` is older than, say, 30 days — this repo doesn't include one since
-it needs Firebase's paid Blaze plan for scheduled functions.
+Note: because codes aren't ever expired or deleted automatically, `liveMatches` and `rooms`
+will accumulate old rooms over time. For a personal/team project this is harmless (each doc is
+a few KB), but if you want it tidy, add a scheduled Cloud Function that deletes documents whose
+`updatedAt` is older than, say, 30 days — this repo doesn't include one since it needs
+Firebase's paid Blaze plan for scheduled functions.
 
 ## 5. Build & test
 
 1. Sync Gradle / rebuild the app (Android Studio will pick up the new `google-services.json`
    and the `com.google.gms.google-services` plugin automatically).
 2. Install the app on two devices (or one device + one emulator).
-3. On **Mobile1**: Start a new match as normal. Once scoring opens, the top bar shows
-   **"Match Code: XXXXXX"**.
-4. On **Mobile2**: Home screen > **Join Shared Match** > type in that code > Join. It opens
-   straight into the same live match.
-5. Score a ball on either phone — it appears on the other within a second or two.
+3. On **Mobile1**: Home screen > **Room** > **Create Room**. Note the Room Code shown.
+4. On **Mobile2**: Home screen > **Room** > enter that code (or scan the QR code) > **Join
+   Room**.
+5. On **Mobile1**: tap **Start Match** from the Room dialog, set up the match as normal, and
+   pick which team **this** phone is scoring the 1st innings for. The other phone picks up the
+   match automatically — no separate "join" step needed for it.
+6. Score a ball on either phone — it appears on the other within a second or two.
+7. Once the match finishes, either phone can tap **Start Next Match** from the Room dialog to
+   begin the next match in the same room, still using the same Room Code.
 
 ## How it works / limitations
 
@@ -92,8 +106,13 @@ it needs Firebase's paid Blaze plan for scheduled functions.
   crashes), and the next time it's back online its next change is pushed/pulled as normal —
   but changes made while offline on *both* phones at once can conflict per the point above.
 - **Squads/players are not synced** — only the match, its innings, and its balls. Each device
-  keeps its own local squad list.
-- Every match gets a share code and an (empty, harmless) push attempt when created, even if
-  you never intend to share it — this just costs one small Firestore write. If you'd rather
-  opt in per-match instead, that would be a good place to add a "Share this match" toggle to
-  `MatchSetupScreen`/`MatchSetupViewModel` in a follow-up.
+  keeps its own local squad list; picking the same saved squad on both phones when setting up
+  each match in the room keeps names consistent.
+- **A match only gets a share code when it's created inside a Room.** A match started without
+  an active room stays purely local/offline (no Firestore write at all) — Rooms are now the
+  only way to share a match live between two phones, replacing the old per-match "Join Shared
+  Match" flow.
+- **Room slots are freed by an explicit Exit, not automatically.** If a phone goes offline or
+  the app is closed without tapping **Exit Room**, it still holds its slot — the other user
+  needs that phone's owner to exit (or, in a pinch, exit the room and both rejoin) before a
+  third device can take the freed spot.

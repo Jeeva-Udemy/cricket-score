@@ -10,6 +10,7 @@ import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.data.RoomStore
 import com.example.cricketscorer.model.DismissedEnd
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.WicketType
@@ -468,6 +469,29 @@ class ScoringViewModel(
         super.onCleared()
         cloudListener?.remove()
         cloudPushJob?.cancel()
+    }
+
+    // ---- Rooms ----
+
+    /** True when [shareCode] belongs to a Room THIS device currently belongs to — used to show
+     *  an Exit Room shortcut right here on the Scoring screen (req: the person entering the
+     *  score has to leave the ground mid-match, and needs a fast way out for the next device
+     *  to take over). */
+    fun isActiveRoomMatch(shareCode: String?): Boolean {
+        if (shareCode == null) return false
+        return RoomStore.getActiveRoom(appContext)?.roomCode == shareCode
+    }
+
+    /** req: "an Exit button to exit from the room" reachable from the Scoring screen itself.
+     *  Frees this device's slot (best-effort — see [CloudSync.exitRoom]) and clears its local
+     *  room membership; the caller navigates back to Home afterwards since this device is no
+     *  longer part of the room. */
+    fun exitRoom() {
+        val active = RoomStore.getActiveRoom(appContext) ?: return
+        RoomStore.clearActiveRoom(appContext)
+        viewModelScope.launch {
+            runCatching { CloudSync.exitRoom(active.roomCode, deviceId, active.slot) }
+        }
     }
 
     private fun observeMatchData() {

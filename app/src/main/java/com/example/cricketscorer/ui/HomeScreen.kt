@@ -22,11 +22,11 @@ import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.SportsCricket
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,7 +40,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.viewmodel.BackupUiState
 import com.example.cricketscorer.viewmodel.HomeViewModel
-import com.example.cricketscorer.viewmodel.JoinMatchUiState
+import com.example.cricketscorer.viewmodel.RoomUiState
 
 private data class HomeAction(
     val label: String,
@@ -77,26 +76,13 @@ fun HomeScreen(
     onTournaments: () -> Unit = {},
     onMatchHistory: () -> Unit = {}
 ) {
-    val matches by viewModel.matches.collectAsState()
     val backupState by viewModel.backupState.collectAsState()
     var showBackupDialog by remember { mutableStateOf(false) }
 
-    // ---- Cloud Sync: Join Shared Match (req: score the same match from two phones) ----
-    val joinMatchState by viewModel.joinMatchState.collectAsState()
-    var showJoinDialog by remember { mutableStateOf(false) }
-    LaunchedEffect(joinMatchState) {
-        val state = joinMatchState
-        if (state is JoinMatchUiState.Success) {
-            showJoinDialog = false
-            viewModel.dismissJoinMatchStatus()
-            onOpenMatch(state.matchId)
-        } else if (state is JoinMatchUiState.NeedsTeamSelection) {
-            // Close the code-entry dialog so it doesn't sit stacked behind the team picker.
-            showJoinDialog = false
-        }
-    }
-
-    val inProgressMatches = matches.filter { !it.isCompleted }
+    // ---- Cloud Sync: Room (req: play several matches back-to-back in one room instead of
+    // re-sharing a code before every single match) ----
+    val roomState by viewModel.roomState.collectAsState()
+    var showRoomDialog by remember { mutableStateOf(false) }
 
     // ---- Google Sign-In launcher (req #1: Backup & Resync) ----
     val signInLauncher = rememberLauncherForActivityResult(
@@ -134,29 +120,31 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // ---- Action grid (req #2: restyled to match the reference screenshot) ----
+            // req: "Resume Match" removed — Match History already covers getting back into an
+            // in-progress match. Backup & Resync and Room are grid tiles here too now, so
+            // every home-screen action shares the same look (previously those two were
+            // full-width OutlinedButtons below the grid, styled differently from the rest).
             val actions = listOf(
                 HomeAction("Start Match", Icons.Default.SportsCricket, Color(0xFFDCEFD9), onStartNewMatch),
                 HomeAction("Add Team", Icons.Default.Groups, Color(0xFFDCE8FB), onManageSquads),
-                HomeAction("Resume Match", Icons.Default.PlayCircle, Color(0xFFFBE9D0), {
-                    val target = inProgressMatches.firstOrNull()
-                    if (target != null) onOpenMatch(target.matchId)
-                }),
                 // req #1: Match History now opens its own screen instead of scrolling an
                 // inline list on the home page.
                 HomeAction("Match History", Icons.Default.History, Color(0xFFF6DCEF), onMatchHistory),
                 HomeAction("Player Stats", Icons.Default.Person, Color(0xFFDCF1F5), onPlayerStats),
                 HomeAction("Rankings", Icons.Default.Leaderboard, Color(0xFFDCF1F5), onRankings),
-                HomeAction("Tournaments", Icons.Default.EmojiEvents, Color(0xFFDCF1F5), onTournaments)
+                HomeAction("Tournaments", Icons.Default.EmojiEvents, Color(0xFFDCF1F5), onTournaments),
+                HomeAction("Backup & Resync", Icons.Default.CloudSync, Color(0xFFFBE9D0), { showBackupDialog = true }),
+                HomeAction("Room", Icons.Default.GroupAdd, Color(0xFFDCE8FB), { showRoomDialog = true })
             )
 
             // req #1: a plain chunked Column/Row grid instead of a height-constrained
             // LazyVerticalGrid. The old fixed "110dp per row" height guess didn't always
             // match the actual card height (which depends on screen width via aspectRatio),
             // so on some devices the grid's real content could run taller than its forced
-            // height and clip into — or visually overlap — the Backup & Resync button right
-            // below it. Letting each row size itself from its fixed-height cards means the
-            // column height is always exactly right, and the whole screen is scrollable so
-            // nothing is ever cut off.
+            // height and clip into — or visually overlap — content right below it. Letting
+            // each row size itself from its fixed-height cards means the column height is
+            // always exactly right, and the whole screen is scrollable so nothing is ever cut
+            // off.
             actions.chunked(2).forEach { rowActions ->
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -165,32 +153,21 @@ fun HomeScreen(
                     rowActions.forEach { action ->
                         HomeActionCard(action = action, modifier = Modifier.weight(1f))
                     }
-                    // Pad out an odd last row (e.g. Tournaments alone) so it doesn't stretch
-                    // to double width.
+                    // Pad out an odd last row so it doesn't stretch to double width.
                     if (rowActions.size == 1) {
                         Spacer(Modifier.weight(1f))
                     }
                 }
             }
 
-            // ---- Backup & Resync (req #1) ----
-            OutlinedButton(
-                onClick = { showBackupDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.height(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Backup & Resync")
-            }
-
-            // ---- Join Shared Match (Cloud Sync: TeamA on Mobile1, TeamB on Mobile2) ----
-            OutlinedButton(
-                onClick = { showJoinDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.GroupAdd, contentDescription = null, modifier = Modifier.height(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Join Shared Match")
+            // ---- Room status (req: the OTHER phone should notice a new match without
+            // having to open the Room dialog first) ----
+            (roomState as? RoomUiState.InRoom)?.let { room ->
+                RoomStatusBanner(
+                    room = room,
+                    onOpen = { room.currentMatchId?.let(onOpenMatch) },
+                    onManage = { showRoomDialog = true }
+                )
             }
 
             // req: the "In Progress Matches" list used to be duplicated here and on the
@@ -217,147 +194,211 @@ fun HomeScreen(
         )
     }
 
-    if (showJoinDialog) {
-        JoinMatchDialog(
-            joinMatchState = joinMatchState,
-            onJoin = { code -> viewModel.joinMatchByCode(code) },
-            onDismiss = {
-                showJoinDialog = false
-                viewModel.dismissJoinMatchStatus()
-            }
-        )
-    }
-
-    // req #3/#4: after a successful join, ask this device's user which team they're
-    // scoring for before handing off to the Scoring screen.
-    (joinMatchState as? JoinMatchUiState.NeedsTeamSelection)?.let { needsSelection ->
-        SelectYourTeamDialog(
-            teamAName = needsSelection.teamAName,
-            teamBName = needsSelection.teamBName,
-            onSelect = { teamName -> viewModel.confirmJoinTeam(needsSelection.matchId, teamName) }
+    if (showRoomDialog) {
+        RoomDialog(
+            roomState = roomState,
+            onCreateRoom = { viewModel.createRoom() },
+            onJoinRoom = { code -> viewModel.joinRoomByCode(code) },
+            onExitRoom = {
+                viewModel.exitRoom()
+                showRoomDialog = false
+            },
+            onStartMatch = {
+                showRoomDialog = false
+                onStartNewMatch()
+            },
+            onOpenMatch = { matchId ->
+                showRoomDialog = false
+                onOpenMatch(matchId)
+            },
+            onDismiss = { showRoomDialog = false },
+            onDismissError = { viewModel.dismissRoomError() }
         )
     }
 }
 
-/** req #3/#4: "Keep a button to select from which device who's going to update the score by
- *  selecting the team" — shown right after a device joins a shared match by code, so the two
- *  phones agree on which one edits which innings instead of both trying to edit everything. */
+/** req: small status card shown on Home whenever this device is in a room, so the OTHER phone
+ *  notices a newly-started match (or how many devices are connected) without having to open
+ *  the Room dialog first. */
 @Composable
-private fun SelectYourTeamDialog(
-    teamAName: String,
-    teamBName: String,
-    onSelect: (String) -> Unit
+private fun RoomStatusBanner(
+    room: RoomUiState.InRoom,
+    onOpen: () -> Unit,
+    onManage: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = { /* must pick a team to continue */ },
-        title = { Text("Which team are you scoring for?") },
-        text = {
-            Text(
-                "This phone will only be able to enter the score while your team is batting. " +
-                    "The other phone stays view-only during that innings, and it'll be the " +
-                    "other way round once the innings switches.",
-                style = MaterialTheme.typography.bodySmall
-            )
-        },
-        confirmButton = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onSelect(teamAName) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(teamAName)
-                }
-                Button(onClick = { onSelect(teamBName) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(teamBName)
-                }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        onClick = onManage
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    "Room ${room.roomCode} • ${room.devicesConnected}/2 devices",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    if (room.currentMatchId != null) "Match in progress" else "Waiting to start a match",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+            if (room.currentMatchId != null) {
+                Button(onClick = onOpen) { Text("Open") }
             }
         }
-    )
+    }
 }
 
+/**
+ * req: "we can create a room instead of shared match ... in that room we can play multiple
+ * matches one after another" + "an Exit button to exit from the room" + "only 2 device should
+ * be able to join the room 1 for each team". Replaces the old one-shot "Join Shared Match"
+ * dialog — a room's code is reusable across as many matches as the two devices want to play.
+ */
 @Composable
-private fun JoinMatchDialog(
-    joinMatchState: JoinMatchUiState,
-    onJoin: (String) -> Unit,
-    onDismiss: () -> Unit
+private fun RoomDialog(
+    roomState: RoomUiState,
+    onCreateRoom: () -> Unit,
+    onJoinRoom: (String) -> Unit,
+    onExitRoom: () -> Unit,
+    onStartMatch: () -> Unit,
+    onOpenMatch: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    onDismissError: () -> Unit
 ) {
     var code by remember { mutableStateOf("") }
     var scanError by remember { mutableStateOf<String?>(null) }
-    val inProgress = joinMatchState is JoinMatchUiState.Joining
     val context = LocalContext.current
+    val working = roomState is RoomUiState.Working
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Join Shared Match") },
+        title = { Text("Room") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Scan the QR code shown at the top of the Scoring screen on the other " +
-                        "phone, or enter the Match Code by hand, to see and update the same " +
-                        "match live.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                // req: scan option alongside manual entry.
-                OutlinedButton(
-                    onClick = {
-                        scanError = null
-                        scanQrCodeForMatch(
-                            context = context,
-                            onResult = { scanned ->
-                                code = scanned
-                                onJoin(scanned)
-                            },
-                            onFailure = { message -> scanError = message }
+                when (roomState) {
+                    is RoomUiState.InRoom -> {
+                        Text(
+                            "Room Code: ${roomState.roomCode}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
                         )
-                    },
-                    enabled = !inProgress,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.height(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Scan QR Code")
-                }
+                        Text(
+                            "${roomState.devicesConnected}/2 devices connected" +
+                                if (roomState.devicesConnected < 2) " — share the code with the other phone." else ".",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Play as many matches as you like in this room without sharing a " +
+                                "new code — start the next one straight from here once this " +
+                                "one finishes.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Button(onClick = onStartMatch, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (roomState.currentMatchId != null) "Start Next Match" else "Start Match")
+                        }
+                        roomState.currentMatchId?.let { matchId ->
+                            OutlinedButton(
+                                onClick = { onOpenMatch(matchId) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Open Current Match")
+                            }
+                        }
+                        Divider()
+                        // req: "there should be an Exit button to exit from the room" — e.g.
+                        // the device scoring the match has to leave the ground mid-match.
+                        TextButton(
+                            onClick = onExitRoom,
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Exit Room")
+                        }
+                    }
+                    is RoomUiState.Working -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.height(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Working…", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    else -> {
+                        Text(
+                            "Create a room and share its code with the other phone — one per " +
+                                "team. You can then play several matches back-to-back without " +
+                                "re-sharing a code.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Button(onClick = onCreateRoom, modifier = Modifier.fillMaxWidth()) {
+                            Text("Create Room")
+                        }
 
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Divider(modifier = Modifier.weight(1f))
-                    Text(
-                        "  or  ",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Divider(modifier = Modifier.weight(1f))
-                }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Divider(modifier = Modifier.weight(1f))
+                            Text(
+                                "  or  ",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Divider(modifier = Modifier.weight(1f))
+                        }
 
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it.uppercase() },
-                    label = { Text("Match Code") },
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Characters
-                    ),
-                    enabled = !inProgress,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (inProgress) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.height(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Joining…", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(
+                            onClick = {
+                                scanError = null
+                                scanQrCodeForMatch(
+                                    context = context,
+                                    onResult = { scanned -> code = scanned; onJoinRoom(scanned) },
+                                    onFailure = { message -> scanError = message }
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.height(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Scan Room Code")
+                        }
+                        OutlinedTextField(
+                            value = code,
+                            onValueChange = { code = it.uppercase() },
+                            label = { Text("Room Code") },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Characters
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(
+                            onClick = { onJoinRoom(code) },
+                            enabled = code.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Join Room")
+                        }
+                        scanError?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
-                scanError?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-                (joinMatchState as? JoinMatchUiState.Error)?.let {
+                (roomState as? RoomUiState.Error)?.let {
                     Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onDismissError) { Text("Try Again") }
                 }
             }
         },
-        confirmButton = {
-            Button(onClick = { onJoin(code) }, enabled = !inProgress && code.isNotBlank()) {
-                Text("Join")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !inProgress) { Text("Cancel") } }
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !working) { Text("Close") } }
     )
 }
 

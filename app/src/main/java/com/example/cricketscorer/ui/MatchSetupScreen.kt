@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -84,37 +85,57 @@ fun MatchSetupScreen(
                 Text("Manage Saved Squads →")
             }
 
+            // req: this match is being created for an active Room — reuses the room's code
+            // (no need to share a new one) instead of a purely local/unshared match.
+            viewModel.activeRoomCode?.let { code ->
+                Text(
+                    "Creating a match for Room $code",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
             Text("Team A", style = MaterialTheme.typography.titleMedium)
-            SquadDropdown(
-                label = "Team A Squad (optional)",
-                squads = squads,
-                selected = viewModel.selectedSquadA,
-                onSelect = { viewModel.selectSquadForTeamA(it) }
-            )
-            OutlinedTextField(
-                value = viewModel.teamAName,
-                onValueChange = { viewModel.teamAName = capitalizeFirstLetter(it) },
-                label = { Text("Team A Name") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                modifier = Modifier.fillMaxWidth()
-            )
+            // req #4: squad dropdown and the manual-entry name field side by side instead of
+            // stacked, so picking a saved squad and typing a name are equally quick options
+            // right next to each other rather than one after the other.
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                SquadDropdown(
+                    label = "Team A Squad (optional)",
+                    squads = squads,
+                    selected = viewModel.selectedSquadA,
+                    onSelect = { viewModel.selectSquadForTeamA(it) },
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = viewModel.teamAName,
+                    onValueChange = { viewModel.teamAName = capitalizeFirstLetter(it) },
+                    label = { Text("Team A Name") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
             Text("Team B", style = MaterialTheme.typography.titleMedium)
-            SquadDropdown(
-                label = "Team B Squad (optional)",
-                squads = squads,
-                selected = viewModel.selectedSquadB,
-                onSelect = { viewModel.selectSquadForTeamB(it) }
-            )
-            OutlinedTextField(
-                value = viewModel.teamBName,
-                onValueChange = { viewModel.teamBName = capitalizeFirstLetter(it) },
-                label = { Text("Team B Name") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                modifier = Modifier.fillMaxWidth()
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                SquadDropdown(
+                    label = "Team B Squad (optional)",
+                    squads = squads,
+                    selected = viewModel.selectedSquadB,
+                    onSelect = { viewModel.selectSquadForTeamB(it) },
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = viewModel.teamBName,
+                    onValueChange = { viewModel.teamBName = capitalizeFirstLetter(it) },
+                    label = { Text("Team B Name") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
@@ -176,6 +197,34 @@ fun MatchSetupScreen(
                 )
             }
 
+            // req: "select who's going to update the score for the 1st innings while creating
+            // the match itself" — only relevant when this match belongs to a Room (a purely
+            // local match only ever has the one device scoring it).
+            if (viewModel.activeRoomCode != null) {
+                Text("Who's scoring the 1st innings?", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "This phone will be the one entering the score once the match starts — " +
+                        "the other phone in the room stays view-only until the innings switches.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val teamAValid = viewModel.teamAName.isNotBlank()
+                    val teamBValid = viewModel.teamBName.isNotBlank()
+
+                    FilterChip(
+                        selected = teamAValid && viewModel.scoringTeam == viewModel.teamAName,
+                        onClick = { if (teamAValid) viewModel.scoringTeam = viewModel.teamAName },
+                        label = { Text(viewModel.teamAName.ifBlank { "Team A" }) }
+                    )
+                    FilterChip(
+                        selected = teamBValid && viewModel.scoringTeam == viewModel.teamBName,
+                        onClick = { if (teamBValid) viewModel.scoringTeam = viewModel.teamBName },
+                        label = { Text(viewModel.teamBName.ifBlank { "Team B" }) }
+                    )
+                }
+            }
+
             // Whichever team bats first supplies the opener player-picker chips
             val battingFirstIsA = (viewModel.tossDecision == TossDecision.BAT) ==
                 (viewModel.tossWinnerTeam == viewModel.teamAName)
@@ -233,7 +282,8 @@ fun MatchSetupScreen(
             val canStart = viewModel.strikerName.isNotBlank() &&
                 viewModel.nonStrikerName.isNotBlank() &&
                 !viewModel.strikerName.trim().equals(viewModel.nonStrikerName.trim(), ignoreCase = true) &&
-                viewModel.openingBowlerName.isNotBlank()
+                viewModel.openingBowlerName.isNotBlank() &&
+                (viewModel.activeRoomCode == null || viewModel.scoringTeam != null)
 
             Button(
                 onClick = { viewModel.startMatch(onMatchStarted) },

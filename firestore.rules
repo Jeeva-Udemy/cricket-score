@@ -1,10 +1,17 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Cloud Sync: each shared match lives at liveMatches/{shareCode}. There's no login in
-    // this app — the 6-character code itself is the "password" (like a meeting link), so
-    // anyone who has it can read/write that one document. Nothing else is reachable.
-    match /liveMatches/{shareCode} {
+    // Cloud Sync: each room's currently-live match lives at liveMatches/{roomCode}. There's
+    // no login in this app — the 6-character code itself is the "password" (like a meeting
+    // link), so anyone who has it can read/write that one document. Nothing else is reachable.
+    match /liveMatches/{roomCode} {
+      allow read, write: if true;
+    }
+    // Rooms: tracks which two devices (at most) currently hold a room's slots, one per team,
+    // and which team each slot is scoring for in the room's current match. Same no-login
+    // model as liveMatches above — the room code is the password. The "only 2 devices" limit
+    // itself is enforced app-side (see CloudSync.joinRoom), not by these rules.
+    match /rooms/{roomCode} {
       allow read, write: if true;
     }
     match /{document=**} {
