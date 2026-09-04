@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -46,10 +47,21 @@ import com.example.cricketscorer.viewmodel.MatchSetupViewModel
 @Composable
 fun MatchSetupScreen(
     viewModel: MatchSetupViewModel,
+    // req #5: null when reached from Home's plain "Start Match" (stays a purely local,
+    // single-device match); the Room's own code when reached from inside that Room's "Start
+    // Match" (becomes a Room match, scored across two devices). See MainActivity's nav graph.
+    roomCode: String? = null,
     onNavigateBack: () -> Unit,
     onManageSquads: () -> Unit,
     onMatchStarted: (matchId: Long, inningsId: Long) -> Unit
 ) {
+    // Configure once per screen visit — never implicitly, and never re-applied on
+    // recomposition (configureForRoom is idempotent on its own, but keying on roomCode here
+    // also re-runs it if this screen instance is ever reused for a different room code).
+    LaunchedEffect(roomCode) {
+        viewModel.configureForRoom(roomCode)
+    }
+
     val squads by viewModel.squads.collectAsState()
     val squadAPlayers by viewModel.squadAPlayers.collectAsState()
     val squadBPlayers by viewModel.squadBPlayers.collectAsState()

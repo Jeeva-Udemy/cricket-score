@@ -26,12 +26,30 @@ class MatchSetupViewModel(
     private val appContext: Context
 ) : ViewModel() {
 
-    // Rooms: if this device is currently in a room, this match is being created *for* that
-    // room — it reuses the room's code instead of generating a fresh one (req: play several
-    // matches back-to-back in the same room), and the user must say which team they're
-    // scoring for below instead of it being silently assumed (see [scoringTeam]).
-    private val activeRoom = RoomStore.getActiveRoom(appContext)
-    val activeRoomCode: String? = activeRoom?.roomCode
+    // Rooms: req #5 — "If I create a match in Start Match it should not go into the room
+    // match... For updating it with 2 devices for each team we have Room Match only." A match
+    // must only be tied to a Room when it's explicitly started *from* that Room (Room Detail's
+    // "Start Match"), never just because this device happens to be sitting in some active room
+    // while the user taps Home's plain "Start Match". So this is no longer read implicitly at
+    // construction time — the caller passes the room code explicitly via [configureForRoom].
+    private var activeRoom by mutableStateOf<RoomStore.ActiveRoom?>(null)
+        private set
+    val activeRoomCode: String? get() = activeRoom?.roomCode
+
+    private var roomConfigured = false
+
+    /** Called once, right after this screen is shown (see MatchSetupScreen's
+     *  LaunchedEffect(roomCode)). [roomCode] is null when reached from Home's "Start Match" —
+     *  the match stays purely local/offline, single-device, and never becomes a Room match.
+     *  When non-null (Room Detail's "Start Match"), it's cross-checked against the room this
+     *  device is actually in before being trusted, so a stale/mismatched code can't sneak a
+     *  match into the wrong room. Idempotent so recomposition can't re-run it. */
+    fun configureForRoom(roomCode: String?) {
+        if (roomConfigured) return
+        roomConfigured = true
+        if (roomCode == null) return
+        activeRoom = RoomStore.getActiveRoom(appContext)?.takeIf { it.roomCode == roomCode }
+    }
 
     // req: "select who's going to update the score for the 1st innings while creating the
     // match itself" — which team THIS device will score for. Only meaningful (and shown in

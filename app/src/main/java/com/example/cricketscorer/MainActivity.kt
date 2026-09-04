@@ -89,7 +89,10 @@ fun CricketNavHost(factory: ViewModelFactory) {
                 viewModel = roomsViewModel,
                 roomCode = code,
                 onNavigateBack = { navController.popBackStack() },
-                onStartMatch = { navController.navigate("setup") },
+                // req #5: a match started from inside a Room carries that room's code so it
+                // becomes a Room match — unlike Home's plain "Start Match" below, which never
+                // passes a roomCode and so always creates a purely local, single-device match.
+                onStartMatch = { navController.navigate("setup?roomCode=$code") },
                 onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") }
             )
         }
@@ -131,10 +134,26 @@ fun CricketNavHost(factory: ViewModelFactory) {
             )
         }
 
-        composable("setup") {
+        composable(
+            // req #5: roomCode is an optional query-style arg — Home's "Start Match" navigates
+            // to plain "setup" (no roomCode, so this defaults to null and the match stays
+            // local/single-device); Room Detail's "Start Match" navigates to
+            // "setup?roomCode=<code>" so MatchSetupViewModel.configureForRoom ties the new
+            // match to that room instead.
+            route = "setup?roomCode={roomCode}",
+            arguments = listOf(
+                navArgument("roomCode") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            val roomCode = backStackEntry.arguments?.getString("roomCode")
             val setupViewModel: MatchSetupViewModel = viewModel(factory = factory)
             MatchSetupScreen(
                 viewModel = setupViewModel,
+                roomCode = roomCode,
                 onNavigateBack = { navController.popBackStack() },
                 onManageSquads = { navController.navigate("squads") },
                 onMatchStarted = { matchId, inningsId ->

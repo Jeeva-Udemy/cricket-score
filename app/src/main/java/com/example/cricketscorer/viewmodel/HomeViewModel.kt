@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.backup.DriveBackupManager
+import com.example.cricketscorer.data.BackupDataScope
+import com.example.cricketscorer.data.BackupSnapshot
 import com.example.cricketscorer.data.BackupStatusStore
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.MatchEntity
@@ -83,6 +85,17 @@ class HomeViewModel(
     val lastBackupAt: StateFlow<Long?> = _lastBackupAt.asStateFlow()
 
     private var autoBackupJob: Job? = null
+
+    // req #3: "keep a dropdown to Backup only for Squad, Match and Both ... same goes for
+    // Resync." Independent selections — a user might want a full Backup but only ever Resync
+    // their squads, or vice versa.
+    private val _backupScope = MutableStateFlow(BackupDataScope.BOTH)
+    val backupScope: StateFlow<BackupDataScope> = _backupScope.asStateFlow()
+    fun setBackupScope(scope: BackupDataScope) { _backupScope.value = scope }
+
+    private val _resyncScope = MutableStateFlow(BackupDataScope.BOTH)
+    val resyncScope: StateFlow<BackupDataScope> = _resyncScope.asStateFlow()
+    fun setResyncScope(scope: BackupDataScope) { _resyncScope.value = scope }
 
     init {
         observeMatches()
@@ -283,19 +296,36 @@ class HomeViewModel(
 
     private fun backupNow() {
         val account = driveBackupManager.getLastSignedInAccount() ?: return
+        val scope = _backupScope.value
         _backupState.value = BackupUiState.BackingUp
         viewModelScope.launch {
-            val snapshot = repository.getFullBackupSnapshot()
-            val json = BackupSerializer.toJson(snapshot)
-            driveBackupManager.uploadBackup(account, json)
+            // req #3: merge into whatever's already on Drive rather than overwrite it — the
+            // whole file is still a single Drive document, so a "Squad only" backup must not
+            // silently wipe out previously-backed-up match history from it (and vice versa for
+            // "Match only"). Only the categories in [scope] are refreshed from local data; the
+            // rest of the remote file is carried over untouched.
+            val existing = driveBackupManager.downloadBackup(account).getOrNull()
+                ?.let { runCatching { BackupSerializer.fromJson(it) }.getOrNull() }
+            val fresh = repository.getFullBackupSnapshot(scope)
+            val merged = when {
+                existing == null -> fresh
+                scope == BackupDataScope.SQUAD -> existing.copy(squads = fresh.squads, players = fresh.players)
+                scope == BackupDataScope.MATCH -> existing.copy(matches = fresh.matches, innings = fresh.innings, ballEvents = fresh.ballEvents)
+                else -> fresh
+            }
+            driveBackupManager.uploadBackup(account, BackupSerializer.toJson(merged))
                 .onSuccess {
                     val now = System.currentTimeMillis()
-                    BackupStatusStore.setLastBackedUpFingerprint(appContext, matchesFingerprint(snapshot.matches))
                     BackupStatusStore.setLastBackupAt(appContext, now)
                     _lastBackupAt.value = now
-                    _backupState.value = BackupUiState.Success(
-                        "Backed up ${snapshot.matches.size} match(es) to Google Drive."
-                    )
+                    // The auto-backup fingerprint specifically tracks "have matches changed
+                    // since they were last backed up" — only meaningful to update when this
+                    // backup actually covered matches. A Squad-only backup says nothing about
+                    // whether match data is current, so leave that fingerprint alone.
+                    if (scope != BackupDataScope.SQUAD) {
+                        BackupStatusStore.setLastBackedUpFingerprint(appContext, matchesFingerprint(fresh.matches))
+                    }
+                    _backupState.value = BackupUiState.Success(describeBackupSuccess(scope, fresh))
                 }
                 .onFailure {
                     _backupState.value = BackupUiState.Error(
@@ -303,6 +333,12 @@ class HomeViewModel(
                     )
                 }
         }
+    }
+
+    private fun describeBackupSuccess(scope: BackupDataScope, snapshot: BackupSnapshot): String = when (scope) {
+        BackupDataScope.SQUAD -> "Backed up ${snapshot.squads.size} squad(s) to Google Drive."
+        BackupDataScope.MATCH -> "Backed up ${snapshot.matches.size} match(es) to Google Drive."
+        BackupDataScope.BOTH -> "Backed up ${snapshot.matches.size} match(es) and ${snapshot.squads.size} squad(s) to Google Drive."
     }
 
     /** req #3: "an option to delete the existing backup in the gmail drive." */
@@ -340,6 +376,7 @@ class HomeViewModel(
 
     private fun resyncNow() {
         val account = driveBackupManager.getLastSignedInAccount() ?: return
+        val scope = _resyncScope.value
         _backupState.value = BackupUiState.Resyncing
         viewModelScope.launch {
             driveBackupManager.downloadBackup(account)
@@ -348,10 +385,11 @@ class HomeViewModel(
                         _backupState.value = BackupUiState.Error("No backup found on Google Drive yet.")
                     } else {
                         val snapshot = BackupSerializer.fromJson(json)
-                        repository.restoreFromBackup(snapshot)
-                        _backupState.value = BackupUiState.Success(
-                            "Restored ${snapshot.matches.size} match(es) from Google Drive."
-                        )
+                        // req #3: only the selected category is wiped/restored locally — a
+                        // "Match only" resync must never clear local squads just because the
+                        // downloaded file happens to also contain some, and vice versa.
+                        repository.restoreFromBackup(snapshot, scope)
+                        _backupState.value = BackupUiState.Success(describeResyncSuccess(scope, snapshot))
                     }
                 }
                 .onFailure {
@@ -360,6 +398,12 @@ class HomeViewModel(
                     )
                 }
         }
+    }
+
+    private fun describeResyncSuccess(scope: BackupDataScope, snapshot: BackupSnapshot): String = when (scope) {
+        BackupDataScope.SQUAD -> "Restored ${snapshot.squads.size} squad(s) from Google Drive."
+        BackupDataScope.MATCH -> "Restored ${snapshot.matches.size} match(es) from Google Drive."
+        BackupDataScope.BOTH -> "Restored ${snapshot.matches.size} match(es) and ${snapshot.squads.size} squad(s) from Google Drive."
     }
 
     fun dismissBackupStatus() {

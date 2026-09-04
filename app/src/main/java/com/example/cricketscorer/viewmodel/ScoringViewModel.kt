@@ -424,6 +424,24 @@ class ScoringViewModel(
             observedShareCode = shareCode
             cloudListener = CloudSync.listen(shareCode, deviceId) { snapshot ->
                 viewModelScope.launch {
+                    // req: "flickering issue after scanning the QR code ... lock the device and
+                    // open it again to continue" — RoomsViewModel keeps its own Firestore
+                    // listener on this exact same document alive for as long as Room Detail
+                    // stays on the back stack underneath Scoring (it never gets cleared just
+                    // because the user navigated forward into a match), so two independent
+                    // listeners can both fire for the very same remote update at once. If this
+                    // listener applied unconditionally, it could re-apply a snapshot RoomsViewModel
+                    // *just* applied a moment earlier — a redundant Room write that still fires a
+                    // fresh Flow emission, which scheduleCloudPush() (racing to set
+                    // lastRemoteSnapshot below) could misread as a genuine local edit and push
+                    // straight back to Firestore, restarting the cycle on the other device too.
+                    // Comparing against what's ACTUALLY in the local DB right now — not a
+                    // remembered flag — closes that race regardless of which listener's callback
+                    // happens to run first.
+                    if (isSnapshotAlreadyApplied(snapshot)) {
+                        lastRemoteSnapshot = snapshot
+                        return@launch
+                    }
                     applyingRemoteSnapshot = true
                     try {
                         // Recorded BEFORE applying so the guard is in place no matter when
@@ -436,6 +454,21 @@ class ScoringViewModel(
                 }
             }
         }
+    }
+
+    /** True when [snapshot]'s match/innings/ball data already matches what's stored locally for
+     *  this match — see the flicker-fix comment at the [CloudSync.listen] call site above.
+     *  Compares as sets (order-independent) so incidental list-ordering differences between the
+     *  incoming JSON and a fresh DB read never cause a false "different" result; squads/players
+     *  are deliberately not compared since they don't change ball-to-ball and this check only
+     *  needs to be conservative about skipping (a false "different" just costs one redundant,
+     *  harmless re-apply — never skips a real change). */
+    private suspend fun isSnapshotAlreadyApplied(snapshot: BackupSnapshot): Boolean {
+        val incomingMatch = snapshot.matches.firstOrNull() ?: return false
+        val local = repository.getSnapshotForMatch(incomingMatch.matchId)
+        return local.matches.toSet() == snapshot.matches.toSet() &&
+            local.innings.toSet() == snapshot.innings.toSet() &&
+            local.ballEvents.toSet() == snapshot.ballEvents.toSet()
     }
 
     /** Debounced push of the current local state to Firestore so rapid taps (e.g. undo then

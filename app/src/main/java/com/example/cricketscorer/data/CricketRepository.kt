@@ -124,29 +124,45 @@ class CricketRepository(private val dao: CricketDao) {
 
     // ---------- Backup / Resync (Google Drive) ----------
 
-    /** Snapshot of every table, used to build the JSON backup uploaded to Drive. */
-    suspend fun getFullBackupSnapshot(): BackupSnapshot = BackupSnapshot(
-        matches = dao.getAllMatches(),
-        innings = dao.getAllInnings(),
-        ballEvents = dao.getAllBallEvents(),
-        squads = dao.getAllSquads(),
-        players = dao.getAllPlayers()
-    )
+    /** Snapshot of every table, used to build the JSON backup uploaded to Drive.
+     *  req #3: "keep a dropdown to Backup only for Squad, Match and Both" — [scope] limits
+     *  which categories are actually read from the DB; the other categories come back empty
+     *  so the caller (HomeViewModel) can merge them into whatever's already on Drive instead
+     *  of wiping it. */
+    suspend fun getFullBackupSnapshot(scope: BackupDataScope = BackupDataScope.BOTH): BackupSnapshot {
+        val includeMatch = scope != BackupDataScope.SQUAD
+        val includeSquad = scope != BackupDataScope.MATCH
+        return BackupSnapshot(
+            matches = if (includeMatch) dao.getAllMatches() else emptyList(),
+            innings = if (includeMatch) dao.getAllInnings() else emptyList(),
+            ballEvents = if (includeMatch) dao.getAllBallEvents() else emptyList(),
+            squads = if (includeSquad) dao.getAllSquads() else emptyList(),
+            players = if (includeSquad) dao.getAllPlayers() else emptyList()
+        )
+    }
 
     /**
-     * Wipes all local data and replaces it with the contents of [snapshot], preserving the
-     * original row ids so foreign keys (innings -> match, players -> squad, etc.) stay valid.
-     * Used only when the user taps "Resync from Drive".
+     * Replaces local data with the contents of [snapshot], preserving the original row ids so
+     * foreign keys (innings -> match, players -> squad, etc.) stay valid. Used when the user
+     * taps "Resync from Drive".
+     *
+     * req #3: "same goes for Resync" — [scope] limits which categories are actually wiped and
+     * restored. A "Match only" resync must NEVER clear local squads (and vice versa) just
+     * because the downloaded backup file happens to also contain the other category — only the
+     * category the user actually asked to resync is touched.
      */
-    suspend fun restoreFromBackup(snapshot: BackupSnapshot) {
-        dao.clearAllMatches() // cascades: innings, ball_events
-        dao.clearAllSquads()  // cascades: players
-
-        snapshot.squads.forEach { dao.restoreSquad(it) }
-        snapshot.players.forEach { dao.restorePlayer(it) }
-        snapshot.matches.forEach { dao.restoreMatch(it) }
-        snapshot.innings.forEach { dao.restoreInnings(it) }
-        snapshot.ballEvents.forEach { dao.restoreBallEvent(it) }
+    suspend fun restoreFromBackup(snapshot: BackupSnapshot, scope: BackupDataScope = BackupDataScope.BOTH) {
+        if (scope != BackupDataScope.MATCH) {
+            dao.clearAllSquads() // cascades: players
+            snapshot.squads.forEach { dao.restoreSquad(it) }
+            snapshot.players.forEach { dao.restorePlayer(it) }
+        }
+        if (scope != BackupDataScope.SQUAD) {
+            dao.clearAllMatches() // cascades: innings, ball_events
+            snapshot.matches.forEach { dao.restoreMatch(it) }
+            snapshot.innings.forEach { dao.restoreInnings(it) }
+            snapshot.ballEvents.forEach { dao.restoreBallEvent(it) }
+        }
     }
 }
 
@@ -158,3 +174,6 @@ data class BackupSnapshot(
     val squads: List<SquadEntity>,
     val players: List<PlayerEntity>
 )
+
+/** req #3: "keep a dropdown to Backup only for Squad, Match and Both ... same goes for Resync." */
+enum class BackupDataScope { SQUAD, MATCH, BOTH }

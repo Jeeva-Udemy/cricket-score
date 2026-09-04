@@ -29,10 +29,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -48,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.cricketscorer.data.BackupDataScope
 import com.example.cricketscorer.viewmodel.BackupUiState
 import com.example.cricketscorer.viewmodel.HomeViewModel
 
@@ -73,6 +78,8 @@ fun HomeScreen(
 ) {
     val backupState by viewModel.backupState.collectAsState()
     val lastBackupAt by viewModel.lastBackupAt.collectAsState()
+    val backupScope by viewModel.backupScope.collectAsState()
+    val resyncScope by viewModel.resyncScope.collectAsState()
     var showBackupDialog by remember { mutableStateOf(false) }
 
     // ---- Google Sign-In launcher (req #1: Backup & Resync) ----
@@ -165,6 +172,10 @@ fun HomeScreen(
             isSignedIn = viewModel.isSignedInToDrive,
             signedInEmail = viewModel.signedInEmail,
             lastBackupAt = lastBackupAt,
+            backupScope = backupScope,
+            resyncScope = resyncScope,
+            onBackupScopeChange = { viewModel.setBackupScope(it) },
+            onResyncScopeChange = { viewModel.setResyncScope(it) },
             onConnectAccount = {
                 val intent = viewModel.requestConnectAccount()
                 if (intent != null) signInLauncher.launch(intent)
@@ -245,6 +256,10 @@ private fun BackupResyncDialog(
     isSignedIn: Boolean,
     signedInEmail: String?,
     lastBackupAt: Long?,
+    backupScope: BackupDataScope,
+    resyncScope: BackupDataScope,
+    onBackupScopeChange: (BackupDataScope) -> Unit,
+    onResyncScopeChange: (BackupDataScope) -> Unit,
     onConnectAccount: () -> Unit,
     onBackupNow: () -> Unit,
     onResyncNow: () -> Unit,
@@ -314,12 +329,32 @@ private fun BackupResyncDialog(
                     Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
                 if (isSignedIn) {
+                    // req #3: "keep a dropdown to Backup only for Squad, Match and Both ...
+                    // same goes for Resync" — each button gets its own scope picker right above
+                    // it, since a user might want a full Backup but only ever Resync squads
+                    // (or the reverse).
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(onClick = onBackupNow, enabled = !inProgress, modifier = Modifier.weight(1f)) {
-                            Text("Back Up Now")
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            BackupScopeDropdown(
+                                label = "Backup",
+                                selected = backupScope,
+                                enabled = !inProgress,
+                                onSelect = onBackupScopeChange
+                            )
+                            Button(onClick = onBackupNow, enabled = !inProgress, modifier = Modifier.fillMaxWidth()) {
+                                Text("Back Up Now")
+                            }
                         }
-                        OutlinedButton(onClick = onResyncNow, enabled = !inProgress, modifier = Modifier.weight(1f)) {
-                            Text("Resync")
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            BackupScopeDropdown(
+                                label = "Resync",
+                                selected = resyncScope,
+                                enabled = !inProgress,
+                                onSelect = onResyncScopeChange
+                            )
+                            OutlinedButton(onClick = onResyncNow, enabled = !inProgress, modifier = Modifier.fillMaxWidth()) {
+                                Text("Resync")
+                            }
                         }
                     }
                     // req #3: "There should be an option to delete the existing backup in the
@@ -367,5 +402,54 @@ private fun BackupResyncDialog(
                 TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
             }
         )
+    }
+}
+
+private fun BackupDataScope.displayName(): String = when (this) {
+    BackupDataScope.SQUAD -> "Squad"
+    BackupDataScope.MATCH -> "Match"
+    BackupDataScope.BOTH -> "Both"
+}
+
+/** req #3: the Squad/Match/Both picker shared by both the Backup and Resync buttons above. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BackupScopeDropdown(
+    label: String,
+    selected: BackupDataScope,
+    enabled: Boolean,
+    onSelect: (BackupDataScope) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded && enabled,
+        onExpandedChange = { if (enabled) expanded = it }
+    ) {
+        OutlinedTextField(
+            value = selected.displayName(),
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled) },
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && enabled,
+            onDismissRequest = { expanded = false }
+        ) {
+            BackupDataScope.entries.forEach { scope ->
+                DropdownMenuItem(
+                    text = { Text(scope.displayName()) },
+                    onClick = { onSelect(scope); expanded = false }
+                )
+                // req #4: "the border should be under each name" — same under-each-item
+                // divider treatment as every other dropdown in the app.
+                DropdownItemDivider()
+            }
+        }
     }
 }

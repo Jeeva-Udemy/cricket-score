@@ -1,11 +1,11 @@
 package com.example.cricketscorer.ui
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -47,7 +47,10 @@ fun SquadDropdown(
         modifier = modifier
     ) {
         OutlinedTextField(
-            value = selected?.teamName ?: "No saved squad (type names)",
+            // req: the field itself should read "Select Squad" until something is picked,
+            // matching the label — the old "No saved squad (type names)" text stuck around
+            // even after the label above it was changed, which read as a leftover mismatch.
+            value = selected?.teamName ?: "Select Squad",
             onValueChange = {},
             readOnly = true,
             label = { Text(label) },
@@ -59,25 +62,33 @@ fun SquadDropdown(
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            // req #6: "In every dropdown show some border to differentiate the list of data" —
-            // the menu otherwise floats with only a shadow, which can blend into a light
-            // background. A 1dp outline makes the list of options visually distinct.
-            modifier = Modifier
-                .heightIn(max = 240.dp)
-                .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.extraSmall)
+            modifier = Modifier.heightIn(max = 240.dp)
         ) {
             DropdownMenuItem(
-                text = { Text("No saved squad (type names)") },
+                text = { Text("Select Squad") },
                 onClick = { onSelect(null); expanded = false }
             )
+            // req #4: "the border should be under each name" — a divider under every item
+            // (including the last) instead of one border around the whole menu, so each name
+            // in the list is visually separated from the next.
+            DropdownItemDivider()
             squads.forEach { squad ->
                 DropdownMenuItem(
                     text = { Text(squad.teamName) },
                     onClick = { onSelect(squad); expanded = false }
                 )
+                DropdownItemDivider()
             }
         }
     }
+}
+
+/** req #4/#6: the under-each-item border shared by every dropdown in the app (internal, not
+ *  private, so other dropdowns in this package — e.g. HomeScreen's Backup scope pickers — use
+ *  the exact same treatment instead of a slightly different one-off copy). */
+@Composable
+internal fun DropdownItemDivider() {
+    Divider(color = MaterialTheme.colorScheme.outline)
 }
 
 /**
@@ -164,10 +175,7 @@ fun PlayerPickerField(
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                // req #6: same border treatment as SquadDropdown above.
-                modifier = Modifier
-                    .heightIn(max = 220.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.extraSmall)
+                modifier = Modifier.heightIn(max = 220.dp)
             ) {
                 availablePlayerNames.forEach { name ->
                     DropdownMenuItem(
@@ -179,6 +187,8 @@ fun PlayerPickerField(
                         },
                         contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                     )
+                    // req #4: same under-each-item border treatment as SquadDropdown above.
+                    DropdownItemDivider()
                 }
             }
         }

@@ -3,6 +3,7 @@ package com.example.cricketscorer.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cricketscorer.data.BackupSnapshot
 import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.data.CloudDeviceIdStore
 import com.example.cricketscorer.data.CricketRepository
@@ -204,12 +205,36 @@ class RoomsViewModel(
      *  from the room's slot/team mapping (see [CloudSync.setSlotTeams]), and caches both team
      *  names into [RoomStore]'s history so the Rooms list can show "Team A vs Team B" even
      *  offline. */
+    /** See the flicker-fix comment at [attachRoomListener]'s [CloudSync.listen] call — true
+     *  when [snapshot]'s match/innings/ball data already matches what's stored locally.
+     *  Order-independent (compares as sets) and deliberately conservative: a false "different"
+     *  just costs one redundant, harmless re-apply, never skips a real change. */
+    private suspend fun isMatchSnapshotAlreadyApplied(matchId: Long, snapshot: BackupSnapshot): Boolean {
+        val local = repository.getSnapshotForMatch(matchId)
+        return local.matches.toSet() == snapshot.matches.toSet() &&
+            local.innings.toSet() == snapshot.innings.toSet() &&
+            local.ballEvents.toSet() == snapshot.ballEvents.toSet()
+    }
+
     private fun attachRoomListener(code: String, mySlot: Int) {
         roomListener?.remove()
         roomListener = CloudSync.listen(code, deviceId) { snapshot ->
             viewModelScope.launch {
                 val match = snapshot.matches.firstOrNull() ?: return@launch
-                repository.applyMatchSnapshot(snapshot)
+                // req: "flickering issue ... lock the device and open it again to continue" —
+                // once the match is open, ScoringViewModel attaches its OWN listener on this
+                // same Firestore document and this one stays alive too (Room Detail is still on
+                // the back stack underneath Scoring), so both can fire for the same remote
+                // update. Applying unconditionally here caused a redundant Room write racing
+                // against ScoringViewModel's own echo-detection, which could misread the
+                // resulting Flow emission as a real local edit and push it straight back to
+                // Firestore — a slow-motion ping-pong between the two devices that looked like
+                // constant flicker until the screen was locked and reopened. Skipping the write
+                // when the local DB already matches closes that race (see ScoringViewModel's
+                // matching guard).
+                if (!isMatchSnapshotAlreadyApplied(match.matchId, snapshot)) {
+                    repository.applyMatchSnapshot(snapshot)
+                }
                 runCatching { CloudSync.fetchRoom(code) }.getOrNull()?.let { info ->
                     val myTeam = if (mySlot == 1) info.slot1Team else info.slot2Team
                     val otherTeam = if (mySlot == 1) info.slot2Team else info.slot1Team
