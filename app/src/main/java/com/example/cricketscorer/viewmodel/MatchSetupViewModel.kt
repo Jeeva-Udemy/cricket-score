@@ -222,7 +222,8 @@ class MatchSetupViewModel(
             // — Rooms replace the old "every match gets a share code" per-match sharing (see
             // SYNC_SETUP.md). A match created with no active room stays purely local/offline.
             val room = activeRoom
-            if (room != null && activeRoomCode != null) {
+            val roomCode = activeRoomCode
+            if (room != null && roomCode != null) {
                 // req: which team THIS device scores the 1st innings for, chosen explicitly
                 // above instead of always assuming Team A — the OTHER device in the room
                 // learns it's scoring for whichever team is left over (see setSlotTeams /
@@ -234,16 +235,16 @@ class MatchSetupViewModel(
                 // leave the match without a share code; scoring still works purely locally
                 // either way, ScoringViewModel only tries to sync when shareCode != null.
                 runCatching {
-                    val matchWithCode = match.copy(matchId = matchId, shareCode = activeRoomCode)
+                    val matchWithCode = match.copy(matchId = matchId, shareCode = roomCode)
                     val snapshot = repository.getSnapshotForMatch(matchId).copy(matches = listOf(matchWithCode))
                     // Must use the SAME stable per-device id that ScoringViewModel's listener
                     // will use once it attaches for this match — otherwise this device won't
                     // recognize this very first push as "self" and will replay it back over
                     // the first balls scored, reverting them. See CloudDeviceIdStore.
                     val deviceId = CloudDeviceIdStore.getDeviceId(appContext)
-                    CloudSync.pushSnapshot(activeRoomCode, snapshot, deviceId = deviceId)
+                    CloudSync.pushSnapshot(roomCode, snapshot, deviceId = deviceId)
                     repository.updateMatch(matchWithCode)
-                    CloudSync.setSlotTeams(activeRoomCode, room.slot, myScoringTeam, otherTeam)
+                    CloudSync.setSlotTeams(roomCode, room.slot, myScoringTeam, otherTeam)
                 }
                 DeviceMatchRoleStore.setMyTeam(appContext, matchId, myScoringTeam)
             }
