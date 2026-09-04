@@ -6,25 +6,31 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.backup.DriveBackupManager
+import com.example.cricketscorer.data.BackupStatusStore
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** What the pending Google sign-in was for, so we know what to do once it completes. */
-private enum class PendingBackupAction { BACKUP, RESYNC }
+/** What the pending Google sign-in was for, so we know what to do once it completes. Null
+ *  (see [HomeViewModel.pendingAction]) means the user just tapped "Connect Google Account" with
+ *  no specific follow-up action — see [HomeViewModel.onSignInResult]. */
+private enum class PendingBackupAction { BACKUP, RESYNC, DELETE }
 
 sealed class BackupUiState {
     object Idle : BackupUiState()
     object SigningIn : BackupUiState()
     object BackingUp : BackupUiState()
     object Resyncing : BackupUiState()
+    /** req #3: "delete the existing backup in the gmail drive." */
+    object DeletingBackup : BackupUiState()
     data class Success(val message: String) : BackupUiState()
     data class Error(val message: String) : BackupUiState()
 }
@@ -66,6 +72,18 @@ class HomeViewModel(
     val isSignedInToDrive: Boolean
         get() = driveBackupManager.getLastSignedInAccount() != null
 
+    /** The connected account's email, for the "Connected as ..." status line — null when not
+     *  signed in. */
+    val signedInEmail: String?
+        get() = driveBackupManager.getLastSignedInAccount()?.email
+
+    /** req #2: "Last backed up ..." status line — persisted (see [BackupStatusStore]) so it
+     *  survives this ViewModel being recreated on ordinary navigation. */
+    private val _lastBackupAt = MutableStateFlow(BackupStatusStore.getLastBackupAt(appContext))
+    val lastBackupAt: StateFlow<Long?> = _lastBackupAt.asStateFlow()
+
+    private var autoBackupJob: Job? = null
+
     init {
         observeMatches()
     }
@@ -77,9 +95,55 @@ class HomeViewModel(
                 // Clean up selection if any selected matches no longer exist
                 val existingIds = list.map { it.matchId }.toSet()
                 _selectedMatchIds.value = _selectedMatchIds.value.filter { it in existingIds }.toSet()
+                scheduleAutoBackupIfChanged(list)
             }
         }
     }
+
+    // ---------- Automatic backup (req #2) ----------
+
+    /**
+     * req #2: "there shouldn't be any manual configuration for that. If i select the mail id it
+     * should automatically backup the data just like we have it in WhatsApp backup." Once an
+     * account is connected, every meaningful change to the match list (a match created, an
+     * innings break, a match finishing — the matches table only changes a handful of times per
+     * match, never per ball) quietly triggers a background upload, with no "Backup Now" tap
+     * required.
+     *
+     * Comparing against a fingerprint PERSISTED to [BackupStatusStore] (not just an in-memory
+     * flag) matters because this ViewModel gets recreated on ordinary navigation — e.g. backing
+     * out of Scoring to Home. An in-memory "already backed this up" flag would forget that on
+     * every single recreation and either miss a real change made just before recreation, or
+     * spam re-uploads of data that hasn't actually changed.
+     */
+    private fun scheduleAutoBackupIfChanged(list: List<MatchEntity>) {
+        val account = driveBackupManager.getLastSignedInAccount() ?: return
+        val fingerprint = matchesFingerprint(list)
+        if (fingerprint == BackupStatusStore.getLastBackedUpFingerprint(appContext)) return
+        autoBackupJob?.cancel()
+        autoBackupJob = viewModelScope.launch {
+            val snapshot = repository.getFullBackupSnapshot()
+            val freshFingerprint = matchesFingerprint(snapshot.matches)
+            driveBackupManager.uploadBackup(account, BackupSerializer.toJson(snapshot))
+                .onSuccess {
+                    val now = System.currentTimeMillis()
+                    BackupStatusStore.setLastBackedUpFingerprint(appContext, freshFingerprint)
+                    BackupStatusStore.setLastBackupAt(appContext, now)
+                    _lastBackupAt.value = now
+                }
+            // Silent on failure — this was never a user-initiated action, so there's no dialog
+            // open to show an error in. The fingerprint was never updated, so the very next
+            // match-list change (or the next app open) simply tries again.
+        }
+    }
+
+    private fun matchesFingerprint(list: List<MatchEntity>): Int =
+        list.sortedBy { it.matchId }.fold(0) { acc, m ->
+            acc * 31 + java.util.Objects.hash(
+                m.matchId, m.isCompleted, m.currentInningsNumber, m.resultSummary,
+                m.teamAName, m.teamBName
+            )
+        }
 
     fun toggleMatchSelection(matchId: Long) {
         val current = _selectedMatchIds.value.toMutableSet()
@@ -127,6 +191,21 @@ class HomeViewModel(
     /** Call to start (or continue) a resync; launches sign-in first if needed. */
     fun requestResync(): Intent? = requestAction(PendingBackupAction.RESYNC)
 
+    /** req #3: "an option to delete the existing backup in the gmail drive." Launches sign-in
+     *  first if needed, exactly like backup/resync (shouldn't normally happen, since the
+     *  "Delete Backup" button is only shown once already connected). */
+    fun requestDeleteBackup(): Intent? = requestAction(PendingBackupAction.DELETE)
+
+    /** req #2: the plain "Connect Google Account" entry point — no backup/resync/delete
+     *  attached, just establishes the connection so auto-backup can take over from here (see
+     *  [onSignInResult]). Returns null (nothing to launch) if already connected. */
+    fun requestConnectAccount(): Intent? {
+        if (driveBackupManager.getLastSignedInAccount() != null) return null
+        pendingAction = null
+        _backupState.value = BackupUiState.SigningIn
+        return driveBackupManager.getSignInIntent()
+    }
+
     /** Returns a sign-in Intent to launch if one is needed, or null if we can proceed immediately. */
     private fun requestAction(action: PendingBackupAction): Intent? {
         val account = driveBackupManager.getLastSignedInAccount()
@@ -150,7 +229,12 @@ class HomeViewModel(
             if (action != null) {
                 runAction(action)
             } else {
+                // req #2: "If i select the mail id it should automatically backup the data" —
+                // connecting an account with no specific action pending (the plain "Connect
+                // Google Account" button) should still kick off a backup right away, not wait
+                // for the next unrelated match-list change to happen to fire one.
                 _backupState.value = BackupUiState.Idle
+                scheduleAutoBackupIfChanged(_matches.value)
             }
         } catch (e: ApiException) {
             pendingAction = null
@@ -193,6 +277,7 @@ class HomeViewModel(
         when (action) {
             PendingBackupAction.BACKUP -> backupNow()
             PendingBackupAction.RESYNC -> resyncNow()
+            PendingBackupAction.DELETE -> deleteBackupNow()
         }
     }
 
@@ -204,6 +289,10 @@ class HomeViewModel(
             val json = BackupSerializer.toJson(snapshot)
             driveBackupManager.uploadBackup(account, json)
                 .onSuccess {
+                    val now = System.currentTimeMillis()
+                    BackupStatusStore.setLastBackedUpFingerprint(appContext, matchesFingerprint(snapshot.matches))
+                    BackupStatusStore.setLastBackupAt(appContext, now)
+                    _lastBackupAt.value = now
                     _backupState.value = BackupUiState.Success(
                         "Backed up ${snapshot.matches.size} match(es) to Google Drive."
                     )
@@ -214,6 +303,39 @@ class HomeViewModel(
                     )
                 }
         }
+    }
+
+    /** req #3: "an option to delete the existing backup in the gmail drive." */
+    private fun deleteBackupNow() {
+        val account = driveBackupManager.getLastSignedInAccount() ?: return
+        _backupState.value = BackupUiState.DeletingBackup
+        viewModelScope.launch {
+            driveBackupManager.deleteBackup(account)
+                .onSuccess {
+                    // Nothing backed up any more — forget the fingerprint/timestamp so the very
+                    // next match-list change (or reconnect) starts a fresh backup instead of
+                    // wrongly assuming a deleted backup is still "current".
+                    BackupStatusStore.clear(appContext)
+                    _lastBackupAt.value = null
+                    _backupState.value = BackupUiState.Success("Deleted the backup from Google Drive.")
+                }
+                .onFailure {
+                    _backupState.value = BackupUiState.Error(
+                        it.message ?: "Couldn't delete the backup. Check your connection and try again."
+                    )
+                }
+        }
+    }
+
+    /** Disconnects the Google account (req #2's dialog offers this alongside Connect, so the
+     *  user can switch accounts or stop auto-backup). Local match data is untouched — only the
+     *  Drive connection and this device's memory of what was last backed up are cleared. */
+    fun signOutOfDrive() {
+        autoBackupJob?.cancel()
+        driveBackupManager.signOut()
+        BackupStatusStore.clear(appContext)
+        _lastBackupAt.value = null
+        _backupState.value = BackupUiState.Idle
     }
 
     private fun resyncNow() {

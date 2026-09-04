@@ -37,6 +37,12 @@ interface CricketDao {
     @Query("SELECT * FROM matches WHERE shareCode = :roomCode ORDER BY createdAt DESC")
     fun observeMatchesForShareCode(roomCode: String): Flow<List<MatchEntity>>
 
+    /** req #1: "delete the Room and Matches inside it" — every match created while a room was
+     *  active reuses the room's code as its own [MatchEntity.shareCode], so deleting a room
+     *  needs the full list of matches to delete along with it. */
+    @Query("SELECT * FROM matches WHERE shareCode = :roomCode")
+    suspend fun getMatchesForShareCode(roomCode: String): List<MatchEntity>
+
     @Query("DELETE FROM matches WHERE matchId IN (:matchIds)")
     suspend fun deleteMatches(matchIds: List<Long>)
 

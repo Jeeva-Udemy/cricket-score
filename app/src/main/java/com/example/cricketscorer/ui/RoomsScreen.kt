@@ -1,5 +1,7 @@
 package com.example.cricketscorer.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,11 +16,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,6 +40,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -65,7 +74,11 @@ fun RoomsScreen(
 ) {
     val roomHistory by viewModel.roomHistory.collectAsState()
     val roomState by viewModel.roomState.collectAsState()
+    val selectedRoomCodes by viewModel.selectedRoomCodes.collectAsState()
+    val isSelectionMode = selectedRoomCodes.isNotEmpty()
     var showJoinDialog by remember { mutableStateOf(false) }
+    // req #1: "keep a delete button to select multiple ... rooms at the same time to delete."
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
     // Jump straight into a room's detail screen once a CREATE/JOIN call this user just made
     // resolves into InRoom — no reason to make them tap it again from the list they're already
@@ -89,21 +102,56 @@ fun RoomsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Rooms") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            if (isSelectionMode) {
+                TopAppBar(
+                    title = { Text("${selectedRoomCodes.size} Selected") },
+                    navigationIcon = {
+                        IconButton(onClick = { viewModel.clearRoomSelection() }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Clear Selection")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { viewModel.selectAllRooms() }) {
+                            Icon(imageVector = Icons.Default.SelectAll, contentDescription = "Select All")
+                        }
+                        IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete Selected",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("Rooms") },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        if (roomHistory.isNotEmpty()) {
+                            TextButton(onClick = { viewModel.selectAllRooms() }) {
+                                Text("Select")
+                            }
+                        }
                     }
-                }
-            )
+                )
+            }
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                viewModel.dismissRoomError()
-                showJoinDialog = true
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Create or Join a Room")
+            if (!isSelectionMode) {
+                FloatingActionButton(onClick = {
+                    viewModel.dismissRoomError()
+                    showJoinDialog = true
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "Create or Join a Room")
+                }
             }
         }
     ) { padding ->
@@ -146,10 +194,21 @@ fun RoomsScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 items(roomHistory, key = { it.roomCode }) { room ->
+                    val isSelected = selectedRoomCodes.contains(room.roomCode)
                     RoomListCard(
                         room = room,
                         isActive = viewModel.isActiveRoom(room.roomCode),
-                        onClick = { onOpenRoom(room.roomCode) }
+                        isSelected = isSelected,
+                        isSelectionMode = isSelectionMode,
+                        onClick = {
+                            if (isSelectionMode) {
+                                viewModel.toggleRoomSelection(room.roomCode)
+                            } else {
+                                onOpenRoom(room.roomCode)
+                            }
+                        },
+                        onLongClick = { viewModel.toggleRoomSelection(room.roomCode) },
+                        onCheckedChange = { viewModel.toggleRoomSelection(room.roomCode) }
                     )
                 }
             }
@@ -171,15 +230,58 @@ fun RoomsScreen(
             onDismissError = { viewModel.dismissRoomError() }
         )
     }
+
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete Room(s)") },
+            text = {
+                Text(
+                    "Are you sure you want to delete ${selectedRoomCodes.size} selected room(s)? " +
+                        "Every match played inside them will be deleted too, on this device and " +
+                        "in the cloud. This action cannot be undone."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteRooms(selectedRoomCodes)
+                        showDeleteConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RoomListCard(
     room: RoomStore.SavedRoom,
     isActive: Boolean,
-    onClick: () -> Unit
+    isSelected: Boolean,
+    isSelectionMode: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 6.dp else 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+        )
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -187,6 +289,13 @@ private fun RoomListCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (isSelectionMode) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = onCheckedChange,
+                    modifier = Modifier.padding(end = 12.dp)
+                )
+            }
             Column {
                 Text(
                     if (room.myTeam != null && room.otherTeam != null) {
@@ -231,8 +340,32 @@ private fun CreateOrJoinRoomDialog(
 ) {
     var code by remember { mutableStateOf("") }
     var scanError by remember { mutableStateOf<String?>(null) }
+    // req #5: "instead show some loading icon like how much percentage is downloaded" — null
+    // means no download in progress; 0..100 drives the progress row below.
+    var scanModulePercent by remember { mutableStateOf<Int?>(null) }
     val context = LocalContext.current
     val working = roomState is RoomUiState.Working
+
+    fun startScan() {
+        scanError = null
+        scanModulePercent = 0
+        ensureBarcodeScannerModuleInstalled(
+            context = context,
+            onProgress = { percent -> scanModulePercent = percent },
+            onReady = {
+                scanModulePercent = null
+                scanQrCodeForMatch(
+                    context = context,
+                    onResult = { scanned -> code = scanned; onJoinRoom(scanned) },
+                    onFailure = { message -> scanError = message }
+                )
+            },
+            onFailure = { message ->
+                scanModulePercent = null
+                scanError = message
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -267,19 +400,26 @@ private fun CreateOrJoinRoomDialog(
                     }
 
                     OutlinedButton(
-                        onClick = {
-                            scanError = null
-                            scanQrCodeForMatch(
-                                context = context,
-                                onResult = { scanned -> code = scanned; onJoinRoom(scanned) },
-                                onFailure = { message -> scanError = message }
-                            )
-                        },
+                        onClick = { startScan() },
+                        enabled = scanModulePercent == null,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.width(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("Scan Room Code")
+                    }
+                    scanModulePercent?.let { percent ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            CircularProgressIndicator(
+                                progress = { percent / 100f },
+                                modifier = Modifier.width(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Downloading scanner… $percent%",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                     OutlinedTextField(
                         value = code,

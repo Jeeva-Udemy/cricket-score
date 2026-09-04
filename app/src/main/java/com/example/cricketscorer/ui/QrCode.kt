@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import com.google.android.gms.common.moduleinstall.ModuleInstall
+import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -61,4 +63,53 @@ fun scanQrCodeForMatch(
             onFailure(e.message ?: "Couldn't scan the code. Try entering it manually.")
         }
         .addOnCanceledListener { /* user backed out of the scanner — no error to show */ }
+}
+
+/**
+ * req #5: "sometime it shows just packages or module is downloading msg, instead show some
+ * loading icon like how much percentage is downloaded." The QR scanner needs Google Play
+ * services' on-device barcode-scanning module — if it isn't installed yet, launching
+ * [scanQrCodeForMatch] directly shows Play Services' own generic "Getting things ready" sheet
+ * with no real progress. Pre-installing the module ourselves via [ModuleInstall] first lets the
+ * caller show its own percentage-based progress UI instead (see RoomsScreen's scan flow) —
+ * launching the scanner afterwards is then instant since the module is already there.
+ */
+fun ensureBarcodeScannerModuleInstalled(
+    context: Context,
+    onProgress: (percent: Int) -> Unit,
+    onReady: () -> Unit,
+    onFailure: (String) -> Unit
+) {
+    val scannerClient = GmsBarcodeScanning.getClient(context)
+    val moduleInstallClient = ModuleInstall.getClient(context)
+
+    moduleInstallClient.areModulesAvailable(scannerClient)
+        .addOnSuccessListener { response ->
+            if (response.areModulesAvailable()) {
+                onReady()
+            } else {
+                val request = ModuleInstallRequest.newBuilder()
+                    .addApi(scannerClient)
+                    .setListener { update ->
+                        val progress = update.progressInfo
+                        if (progress != null && progress.totalBytesToDownload > 0) {
+                            val percent = (progress.bytesDownloaded * 100 / progress.totalBytesToDownload)
+                                .toInt()
+                                .coerceIn(0, 100)
+                            onProgress(percent)
+                        }
+                    }
+                    .build()
+                moduleInstallClient.installModules(request)
+                    .addOnSuccessListener { onReady() }
+                    .addOnFailureListener { e ->
+                        onFailure(
+                            e.message ?: "Couldn't download the scanner. Check your connection and try again."
+                        )
+                    }
+            }
+        }
+        .addOnFailureListener { e ->
+            onFailure(e.message ?: "Couldn't check the scanner's download status.")
+        }
 }

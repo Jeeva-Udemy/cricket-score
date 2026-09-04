@@ -130,6 +130,28 @@ object RoomStore {
         prefs.edit().putString(KEY_HISTORY_JSON, array.toString()).apply()
     }
 
+    /** req #1: "delete the Room and Matches inside it and it should reflect everywhere" — drops
+     *  [roomCode] from this device's local history so a deleted room stops showing up on the
+     *  Rooms screen. Does not touch [getActiveRoom]/[clearActiveRoom] — the caller is
+     *  responsible for also clearing active membership if the deleted room happened to be it. */
+    fun removeRoomFromHistory(context: Context, roomCode: String) {
+        val prefs = context.getSharedPreferences(HISTORY_PREFS_NAME, Context.MODE_PRIVATE)
+        val remaining = getRoomHistory(context).filter { it.roomCode != roomCode }
+        val array = JSONArray()
+        remaining.forEach { r ->
+            array.put(
+                JSONObject().apply {
+                    put("roomCode", r.roomCode)
+                    put("slot", r.slot)
+                    put("myTeam", r.myTeam)
+                    put("otherTeam", r.otherTeam)
+                    put("createdAt", r.createdAt)
+                }
+            )
+        }
+        prefs.edit().putString(KEY_HISTORY_JSON, array.toString()).apply()
+    }
+
     private fun JSONObject.optNullableString(key: String): String? =
         if (has(key) && !isNull(key)) getString(key) else null
 }

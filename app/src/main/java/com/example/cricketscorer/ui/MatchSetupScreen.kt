@@ -102,7 +102,7 @@ fun MatchSetupScreen(
             // right next to each other rather than one after the other.
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 SquadDropdown(
-                    label = "Team A Squad (optional)",
+                    label = "Select Squad",
                     squads = squads,
                     selected = viewModel.selectedSquadA,
                     onSelect = { viewModel.selectSquadForTeamA(it) },
@@ -121,7 +121,7 @@ fun MatchSetupScreen(
             Text("Team B", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 SquadDropdown(
-                    label = "Team B Squad (optional)",
+                    label = "Select Squad",
                     squads = squads,
                     selected = viewModel.selectedSquadB,
                     onSelect = { viewModel.selectSquadForTeamB(it) },

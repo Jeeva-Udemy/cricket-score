@@ -229,4 +229,15 @@ object CloudSync {
             SetOptions.merge()
         ).await()
     }
+
+    /** req #1: "delete the Room and Matches inside it and it should reflect everywhere" — wipes
+     *  both Firestore documents a room ever touches: its own membership doc (so a stale code
+     *  can't be rejoined) and the live-match mirror at the same code (so a device that still
+     *  has the code cached can't pull down a "ghost" match for a room that no longer exists).
+     *  Best-effort on each half independently — a room doc that was already gone (or a room
+     *  that never started a match, so it has no live-match mirror) is not an error. */
+    suspend fun deleteRoom(code: String) {
+        runCatching { rooms().document(code).delete().await() }
+        runCatching { matches().document(code).delete().await() }
+    }
 }

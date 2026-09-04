@@ -263,6 +263,82 @@ class RoomsViewModel(
         } ?: RoomUiState.NotInRoom
     }
 
+    // ---------- Delete rooms (req #1: "I need to able to delete the Room and Matches inside
+    // it ... So keep a delete button to select multiple ... rooms at the same time to delete") ----------
+
+    private val _selectedRoomCodes = MutableStateFlow<Set<String>>(emptySet())
+    val selectedRoomCodes: StateFlow<Set<String>> = _selectedRoomCodes.asStateFlow()
+
+    fun toggleRoomSelection(roomCode: String) {
+        val current = _selectedRoomCodes.value.toMutableSet()
+        if (!current.remove(roomCode)) current.add(roomCode)
+        _selectedRoomCodes.value = current
+    }
+
+    fun selectAllRooms() {
+        _selectedRoomCodes.value = _roomHistory.value.map { it.roomCode }.toSet()
+    }
+
+    fun clearRoomSelection() {
+        _selectedRoomCodes.value = emptySet()
+    }
+
+    /** Deletes every match ever played inside each room in [roomCodes] (locally — "reflect
+     *  everywhere" for THIS device), the room's Firestore documents (so it can't be rejoined
+     *  or resurface on another device), and drops it from this device's own room history. If a
+     *  deleted room happens to be this device's currently active one, also clears that
+     *  membership exactly like Exit Room does, so the UI never points at a room that no longer
+     *  exists. */
+    fun deleteRooms(roomCodes: Set<String>) {
+        if (roomCodes.isEmpty()) return
+        viewModelScope.launch {
+            roomCodes.forEach { code ->
+                val matchIds = repository.getMatchesForRoom(code).map { it.matchId }
+                if (matchIds.isNotEmpty()) repository.deleteMatches(matchIds)
+                runCatching { CloudSync.deleteRoom(code) }
+                RoomStore.removeRoomFromHistory(appContext, code)
+                if (RoomStore.getActiveRoom(appContext)?.roomCode == code) {
+                    roomListener?.remove()
+                    roomListener = null
+                    RoomStore.clearActiveRoom(appContext)
+                    _roomState.value = RoomUiState.NotInRoom
+                }
+            }
+            _selectedRoomCodes.value = emptySet()
+            refreshRoomHistory()
+        }
+    }
+
+    // ---------- Delete matches inside a room ----------
+
+    private val _selectedRoomMatchIds = MutableStateFlow<Set<Long>>(emptySet())
+    val selectedRoomMatchIds: StateFlow<Set<Long>> = _selectedRoomMatchIds.asStateFlow()
+
+    fun toggleRoomMatchSelection(matchId: Long) {
+        val current = _selectedRoomMatchIds.value.toMutableSet()
+        if (!current.remove(matchId)) current.add(matchId)
+        _selectedRoomMatchIds.value = current
+    }
+
+    fun selectAllRoomMatches(matchIds: List<Long>) {
+        _selectedRoomMatchIds.value = matchIds.toSet()
+    }
+
+    fun clearRoomMatchSelection() {
+        _selectedRoomMatchIds.value = emptySet()
+    }
+
+    /** Deletes the selected matches from within a room's own match list — the room itself (and
+     *  its other matches) is untouched. */
+    fun deleteSelectedRoomMatches() {
+        val ids = _selectedRoomMatchIds.value.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            repository.deleteMatches(ids)
+            _selectedRoomMatchIds.value = emptySet()
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         roomListener?.remove()

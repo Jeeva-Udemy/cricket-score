@@ -108,4 +108,20 @@ class DriveBackupManager(private val appContext: Context) {
                 Result.failure(t)
             }
         }
+
+    /** req #3: "There should be an option to delete the existing backup in the gmail drive."
+     *  A no-op success (not an error) if there was never a backup to begin with. */
+    suspend fun deleteBackup(account: GoogleSignInAccount): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val drive = buildDriveService(account)
+                val existingId = findBackupFileId(drive)
+                if (existingId != null) {
+                    drive.files().delete(existingId).execute()
+                }
+                Result.success(Unit)
+            } catch (t: Throwable) {
+                Result.failure(t)
+            }
+        }
 }

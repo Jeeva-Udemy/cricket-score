@@ -18,6 +18,10 @@ class CricketRepository(private val dao: CricketDao) {
     /** Rooms: every match ever played inside room [roomCode] (see [CricketDao.observeMatchesForShareCode]). */
     fun observeMatchesForRoom(roomCode: String): Flow<List<MatchEntity>> = dao.observeMatchesForShareCode(roomCode)
 
+    /** req #1: one-off lookup used when deleting a whole room, so every match played inside it
+     *  gets deleted along with it (see [CricketDao.getMatchesForShareCode]). */
+    suspend fun getMatchesForRoom(roomCode: String): List<MatchEntity> = dao.getMatchesForShareCode(roomCode)
+
     suspend fun deleteMatches(matchIds: List<Long>) {
         if (matchIds.isEmpty()) return
         dao.deleteBallEventsForMatches(matchIds)

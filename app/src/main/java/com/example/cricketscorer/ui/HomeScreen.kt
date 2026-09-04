@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SportsCricket
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -71,6 +72,7 @@ fun HomeScreen(
     onOpenRooms: () -> Unit = {}
 ) {
     val backupState by viewModel.backupState.collectAsState()
+    val lastBackupAt by viewModel.lastBackupAt.collectAsState()
     var showBackupDialog by remember { mutableStateOf(false) }
 
     // ---- Google Sign-In launcher (req #1: Backup & Resync) ----
@@ -160,6 +162,13 @@ fun HomeScreen(
     if (showBackupDialog) {
         BackupResyncDialog(
             backupState = backupState,
+            isSignedIn = viewModel.isSignedInToDrive,
+            signedInEmail = viewModel.signedInEmail,
+            lastBackupAt = lastBackupAt,
+            onConnectAccount = {
+                val intent = viewModel.requestConnectAccount()
+                if (intent != null) signInLauncher.launch(intent)
+            },
             onBackupNow = {
                 val intent = viewModel.requestBackup()
                 if (intent != null) signInLauncher.launch(intent)
@@ -168,6 +177,11 @@ fun HomeScreen(
                 val intent = viewModel.requestResync()
                 if (intent != null) signInLauncher.launch(intent)
             },
+            onDeleteBackup = {
+                val intent = viewModel.requestDeleteBackup()
+                if (intent != null) signInLauncher.launch(intent)
+            },
+            onDisconnect = { viewModel.signOutOfDrive() },
             onDismiss = {
                 showBackupDialog = false
                 viewModel.dismissBackupStatus()
@@ -217,27 +231,66 @@ private fun HomeActionCard(action: HomeAction, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * req #2: "there shouldn't be any manual configuration ... If i select the mail id it should
+ * automatically backup the data just like we have it in WhatsApp backup." This dialog no longer
+ * asks the user to separately configure anything — connecting an account (below) is the only
+ * step, and every backup after that happens automatically (see HomeViewModel.
+ * scheduleAutoBackupIfChanged). "Back Up Now"/"Resync" stay available for a manual nudge, and
+ * req #3 adds "Delete Backup from Drive".
+ */
 @Composable
 private fun BackupResyncDialog(
     backupState: BackupUiState,
+    isSignedIn: Boolean,
+    signedInEmail: String?,
+    lastBackupAt: Long?,
+    onConnectAccount: () -> Unit,
     onBackupNow: () -> Unit,
     onResyncNow: () -> Unit,
+    onDeleteBackup: () -> Unit,
+    onDisconnect: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val inProgress = backupState is BackupUiState.SigningIn ||
         backupState is BackupUiState.BackingUp ||
-        backupState is BackupUiState.Resyncing
+        backupState is BackupUiState.Resyncing ||
+        backupState is BackupUiState.DeletingBackup
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Backup & Resync") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Save your match history and saved teams to your Google Drive, or " +
-                        "restore them after reinstalling the app.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                if (!isSignedIn) {
+                    Text(
+                        "Connect a Google account once — after that, your match history and " +
+                            "saved teams back up to Google Drive automatically, just like a " +
+                            "WhatsApp chat backup. No manual setup after that.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Button(onClick = onConnectAccount, enabled = !inProgress, modifier = Modifier.fillMaxWidth()) {
+                        Text("Connect Google Account")
+                    }
+                } else {
+                    Text(
+                        signedInEmail ?: "Connected",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        if (lastBackupAt != null) "Last backed up ${formatRelativeTime(lastBackupAt)}"
+                        else "Backing up automatically — no backup made yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Backs up automatically whenever your matches change — the buttons " +
+                            "below are only for a manual nudge.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 if (inProgress) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.height(18.dp))
@@ -247,6 +300,7 @@ private fun BackupResyncDialog(
                                 is BackupUiState.SigningIn -> "Signing in to Google…"
                                 is BackupUiState.BackingUp -> "Backing up…"
                                 is BackupUiState.Resyncing -> "Resyncing from Drive…"
+                                is BackupUiState.DeletingBackup -> "Deleting backup…"
                                 else -> ""
                             },
                             style = MaterialTheme.typography.bodySmall
@@ -259,12 +313,27 @@ private fun BackupResyncDialog(
                 (backupState as? BackupUiState.Error)?.let {
                     Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = onBackupNow, enabled = !inProgress, modifier = Modifier.weight(1f)) {
-                        Text("Backup Now")
+                if (isSignedIn) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(onClick = onBackupNow, enabled = !inProgress, modifier = Modifier.weight(1f)) {
+                            Text("Back Up Now")
+                        }
+                        OutlinedButton(onClick = onResyncNow, enabled = !inProgress, modifier = Modifier.weight(1f)) {
+                            Text("Resync")
+                        }
                     }
-                    OutlinedButton(onClick = onResyncNow, enabled = !inProgress, modifier = Modifier.weight(1f)) {
-                        Text("Resync")
+                    // req #3: "There should be an option to delete the existing backup in the
+                    // gmail drive."
+                    OutlinedButton(
+                        onClick = { showDeleteConfirm = true },
+                        enabled = !inProgress,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Delete Backup from Drive")
+                    }
+                    TextButton(onClick = onDisconnect, enabled = !inProgress, modifier = Modifier.fillMaxWidth()) {
+                        Text("Disconnect Account")
                     }
                 }
             }
@@ -272,4 +341,31 @@ private fun BackupResyncDialog(
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete Backup?") },
+            text = {
+                Text(
+                    "This permanently deletes your backup from Google Drive. Match data on " +
+                        "this device is not affected."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteBackup()
+                        showDeleteConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
 }

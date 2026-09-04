@@ -1,5 +1,6 @@
 package com.example.cricketscorer.ui
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -58,7 +59,12 @@ fun SquadDropdown(
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.heightIn(max = 240.dp)
+            // req #6: "In every dropdown show some border to differentiate the list of data" —
+            // the menu otherwise floats with only a shadow, which can blend into a light
+            // background. A 1dp outline makes the list of options visually distinct.
+            modifier = Modifier
+                .heightIn(max = 240.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.extraSmall)
         ) {
             DropdownMenuItem(
                 text = { Text("No saved squad (type names)") },
@@ -158,7 +164,10 @@ fun PlayerPickerField(
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.heightIn(max = 220.dp)
+                // req #6: same border treatment as SquadDropdown above.
+                modifier = Modifier
+                    .heightIn(max = 220.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.extraSmall)
             ) {
                 availablePlayerNames.forEach { name ->
                     DropdownMenuItem(

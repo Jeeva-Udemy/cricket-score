@@ -132,6 +132,11 @@ dependencies {
     //   (see AndroidManifest.xml's com.google.mlkit.vision.DEPENDENCIES meta-data).
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // req #5: "show some loading icon like how much percentage is downloaded" instead of Play
+    // Services' own generic "module downloading" message — ModuleInstallClient (used from
+    // QrCode.kt's ensureBarcodeScannerModuleInstalled) lives in play-services-base and gives
+    // real bytesDownloaded/totalBytesToDownload progress while the scanner module installs.
+    implementation("com.google.android.gms:play-services-base:18.5.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
