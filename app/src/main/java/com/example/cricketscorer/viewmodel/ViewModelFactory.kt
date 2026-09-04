@@ -15,6 +15,8 @@ class ViewModelFactory(
         return when {
             modelClass.isAssignableFrom(HomeViewModel::class.java) ->
                 HomeViewModel(repository, appContext) as T
+            modelClass.isAssignableFrom(RoomsViewModel::class.java) ->
+                RoomsViewModel(repository, appContext) as T
             modelClass.isAssignableFrom(MatchSetupViewModel::class.java) ->
                 MatchSetupViewModel(repository, appContext) as T
             modelClass.isAssignableFrom(ScoringViewModel::class.java) ->

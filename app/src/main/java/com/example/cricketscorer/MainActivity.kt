@@ -18,10 +18,13 @@ import com.example.cricketscorer.ui.ComingSoonScreen
 import com.example.cricketscorer.ui.HomeScreen
 import com.example.cricketscorer.ui.MatchHistoryScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
+import com.example.cricketscorer.ui.RoomDetailScreen
+import com.example.cricketscorer.ui.RoomsScreen
 import com.example.cricketscorer.ui.ScoringScreen
 import com.example.cricketscorer.ui.SquadScreen
 import com.example.cricketscorer.viewmodel.HomeViewModel
 import com.example.cricketscorer.viewmodel.MatchSetupViewModel
+import com.example.cricketscorer.viewmodel.RoomsViewModel
 import com.example.cricketscorer.viewmodel.ScoringViewModel
 import com.example.cricketscorer.viewmodel.SquadViewModel
 import com.example.cricketscorer.viewmodel.ViewModelFactory
@@ -59,7 +62,32 @@ fun CricketNavHost(factory: ViewModelFactory) {
                 onPlayerStats = { navController.navigate("playerStats") },
                 onRankings = { navController.navigate("rankings") },
                 onTournaments = { navController.navigate("tournaments") },
-                onMatchHistory = { navController.navigate("matchHistory") }
+                onMatchHistory = { navController.navigate("matchHistory") },
+                onOpenRooms = { navController.navigate("rooms") }
+            )
+        }
+
+        composable("rooms") {
+            val roomsViewModel: RoomsViewModel = viewModel(factory = factory)
+            RoomsScreen(
+                viewModel = roomsViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenRoom = { code -> navController.navigate("roomDetail/$code") }
+            )
+        }
+
+        composable(
+            route = "roomDetail/{code}",
+            arguments = listOf(navArgument("code") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val code = backStackEntry.arguments?.getString("code") ?: ""
+            val roomsViewModel: RoomsViewModel = viewModel(factory = factory)
+            RoomDetailScreen(
+                viewModel = roomsViewModel,
+                roomCode = code,
+                onNavigateBack = { navController.popBackStack() },
+                onStartMatch = { navController.navigate("setup") },
+                onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") }
             )
         }
 

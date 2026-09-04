@@ -31,6 +31,12 @@ interface CricketDao {
     @Query("SELECT * FROM matches ORDER BY createdAt DESC")
     suspend fun getAllMatches(): List<MatchEntity>
 
+    /** Rooms (req: "show the list of matches inside the each Rooms that we created") — every
+     *  match created inside a room reuses the room's code as its own [MatchEntity.shareCode]
+     *  (see MatchSetupViewModel.startMatch), so this is a plain lookup by that column. */
+    @Query("SELECT * FROM matches WHERE shareCode = :roomCode ORDER BY createdAt DESC")
+    fun observeMatchesForShareCode(roomCode: String): Flow<List<MatchEntity>>
+
     @Query("DELETE FROM matches WHERE matchId IN (:matchIds)")
     suspend fun deleteMatches(matchIds: List<Long>)
 
