@@ -1144,11 +1144,11 @@ class ScoringViewModel(
      * [applyDelivery] and the isSuperOver branch in [finishInnings]/[buildSuperOverResultText]
      * for what's actually different about scoring one.
      *
-     * Batting order: kept the same as the match's own 1st/2nd innings (whoever batted first in
-     * the match bats first in the Super Over too) rather than modeling a fresh mini-toss — a
-     * deliberate simplification.
+     * Batting order: [battingTeamFirst] is whichever of the match's two team names the user
+     * picked to bat first in the Super Over (see SelectSuperOverBattingTeamDialog) — it no
+     * longer has to mirror the match's own 1st/2nd innings order.
      */
-    fun startSuperOver() {
+    fun startSuperOver(battingTeamFirst: String) {
         viewModelScope.launch {
             val match = repository.getMatch(matchId) ?: return@launch
             if (!match.isCompleted) return@launch
@@ -1159,14 +1159,18 @@ class ScoringViewModel(
             val secondOfPair = allInn.firstOrNull { it.inningsNumber == lastNum } ?: return@launch
             if (firstOfPair.totalRuns != secondOfPair.totalRuns) return@launch // not actually tied
 
+            // The chosen team may be either side of the just-finished pair — match it against
+            // whichever one actually batted first there to know whether to keep or swap the
+            // batting/bowling team+squad assignment for the new Super Over innings.
+            val battingFirst = battingTeamFirst == firstOfPair.battingTeam
             val newInningsNumber = lastNum + 1
             val superOverInnings = InningsEntity(
                 matchId = matchId,
                 inningsNumber = newInningsNumber,
-                battingTeam = firstOfPair.battingTeam,
-                bowlingTeam = firstOfPair.bowlingTeam,
-                battingSquadId = firstOfPair.battingSquadId,
-                bowlingSquadId = firstOfPair.bowlingSquadId,
+                battingTeam = if (battingFirst) firstOfPair.battingTeam else firstOfPair.bowlingTeam,
+                bowlingTeam = if (battingFirst) firstOfPair.bowlingTeam else firstOfPair.battingTeam,
+                battingSquadId = if (battingFirst) firstOfPair.battingSquadId else firstOfPair.bowlingSquadId,
+                bowlingSquadId = if (battingFirst) firstOfPair.bowlingSquadId else firstOfPair.battingSquadId,
                 isSuperOver = true
             )
             val updatedMatch = match.copy(

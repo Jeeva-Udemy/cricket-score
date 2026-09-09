@@ -89,6 +89,9 @@ fun ScoringScreen(
     var isBowlerChangeMandatory by remember { mutableStateOf(false) }
     var showCompleteInningsDialog by remember { mutableStateOf(false) }
     var showSetTargetDialog by remember { mutableStateOf(false) }
+    // req #3 (Super Over): which team bats first is now picked by the user instead of always
+    // mirroring the match's own 1st/2nd innings order.
+    var showSuperOverTeamDialog by remember { mutableStateOf(false) }
     // req: QR code option (alongside the plain text code) so the other phone can join by
     // scanning instead of typing the 6-character Match Code.
     var showShareQrDialog by remember { mutableStateOf(false) }
@@ -376,6 +379,18 @@ fun ScoringScreen(
         )
     }
 
+    if (showSuperOverTeamDialog) {
+        SelectSuperOverBattingTeamDialog(
+            teamAName = state.match?.teamAName ?: "",
+            teamBName = state.match?.teamBName ?: "",
+            onDismiss = { showSuperOverTeamDialog = false },
+            onConfirm = { battingTeamFirst ->
+                viewModel.startSuperOver(battingTeamFirst)
+                showSuperOverTeamDialog = false
+            }
+        )
+    }
+
     if (showCompleteInningsDialog) {
         CompleteInningsDialog(
             currentRuns = innings.totalRuns,
@@ -538,7 +553,7 @@ private fun LiveScoreTabContent(
                         // innings that most recently decided things, whichever pair they are).
                         if (state.canStartSuperOver && state.canEditScore) {
                             Button(
-                                onClick = { viewModel.startSuperOver() },
+                                onClick = { showSuperOverTeamDialog = true },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("Start Super Over")
@@ -1232,6 +1247,44 @@ private fun WicketDialog(
                 enabled = selectedType != null && newBatsmanName.isNotBlank(),
                 modifier = Modifier.focusRequester(confirmButtonFocusRequester)
             ) { Text("Confirm") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * req #3: "keep an option to select which team is going to bat first" for the Super Over —
+ * shown when "Start Super Over" is tapped, before [ScoringViewModel.startSuperOver] actually
+ * creates the new innings.
+ */
+@Composable
+private fun SelectSuperOverBattingTeamDialog(
+    teamAName: String,
+    teamBName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var selectedTeam by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Super Over") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Which team bats first?")
+                listOf(teamAName, teamBName).forEach { team ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        RadioButton(selected = selectedTeam == team, onClick = { selectedTeam = team })
+                        Text(team)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { selectedTeam?.let(onConfirm) },
+                enabled = selectedTeam != null
+            ) { Text("Start Super Over") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

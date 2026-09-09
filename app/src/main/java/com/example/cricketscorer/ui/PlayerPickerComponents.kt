@@ -103,9 +103,10 @@ internal fun DropdownItemDivider() {
  * width either way.
  *
  * req: [label] is meant to be short ("Striker", "Bowler", ...) — it's shown as-is on the
- * manual-entry field and as "Select $label" / "No $label yet" on the dropdown, so a short word
- * reads naturally in both places (the old long labels like "Select Striker Name *" read
- * awkwardly once duplicated that way).
+ * manual-entry field AND as the dropdown's own value text ("No $label yet" only when there's
+ * nothing to pick from), so the two boxes read the same short word instead of the dropdown
+ * carrying a longer "Select Striker Name" that the manual field doesn't. Both fields are also
+ * forced singleLine so neither can wrap onto a second line and grow taller than the other.
  *
  * req #2: whatever is typed by hand always starts with a capital letter.
  * req #4: picking a name from the dropdown automatically moves focus to
@@ -159,9 +160,10 @@ fun PlayerPickerField(
             modifier = Modifier.weight(1f)
         ) {
             OutlinedTextField(
-                value = if (hasNames) value.ifBlank { "Select $label" } else "No $label yet",
+                value = if (hasNames) value.ifBlank { label } else "No $label yet",
                 onValueChange = {},
                 readOnly = true,
+                singleLine = true,
                 enabled = hasNames,
                 label = { Text("Pick from list") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && hasNames) },
