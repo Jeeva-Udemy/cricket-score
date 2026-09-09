@@ -261,7 +261,8 @@ fun ScoringScreen(
                 onExtraClick = { if (state.canEditScore) showExtraDialogFor = it },
                 onPenaltyClick = { if (state.canEditScore) showPenaltyDialog = true },
                 onCompleteInningsClick = { if (state.canEditScore) showCompleteInningsDialog = true },
-                onSetTargetClick = { if (state.canEditScore) showSetTargetDialog = true }
+                onSetTargetClick = { if (state.canEditScore) showSetTargetDialog = true },
+                onStartSuperOverClick = { showSuperOverTeamDialog = true }
             )
             1 -> ScorecardTabContent(state = state)
             2 -> OversTabContent(state = state)
@@ -426,7 +427,8 @@ private fun LiveScoreTabContent(
     onExtraClick: (ExtraType) -> Unit,
     onPenaltyClick: () -> Unit,
     onCompleteInningsClick: () -> Unit,
-    onSetTargetClick: () -> Unit
+    onSetTargetClick: () -> Unit,
+    onStartSuperOverClick: () -> Unit
 ) {
     val match = state.match!!
     val innings = state.currentInnings!!
@@ -553,7 +555,7 @@ private fun LiveScoreTabContent(
                         // innings that most recently decided things, whichever pair they are).
                         if (state.canStartSuperOver && state.canEditScore) {
                             Button(
-                                onClick = { showSuperOverTeamDialog = true },
+                                onClick = onStartSuperOverClick,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("Start Super Over")
