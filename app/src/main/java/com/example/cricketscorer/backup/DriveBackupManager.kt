@@ -145,7 +145,10 @@ class DriveBackupManager(private val appContext: Context) {
                     .setFields("revisions(id, modifiedTime, size)")
                     .execute()
                 val revisions = (result.revisions ?: emptyList())
-                    .map { BackupRevision(it.id, it.modifiedTime?.value ?: 0L, it.size) }
+                    // it.size's exact numeric type (Int vs Long) varies by the pinned Drive
+                    // API client version — .toLong() normalizes either to the Long? that
+                    // BackupRevision expects, so this compiles regardless of which one it is.
+                    .map { BackupRevision(it.id, it.modifiedTime?.value ?: 0L, it.size?.toLong()) }
                     .sortedByDescending { it.modifiedTimeMillis }
                 Result.success(revisions)
             } catch (t: Throwable) {
