@@ -12,6 +12,7 @@ import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.data.PlayerEntity
+import com.example.cricketscorer.data.RecentPlayersStore
 import com.example.cricketscorer.data.RoomStore
 import com.example.cricketscorer.data.SquadEntity
 import com.example.cricketscorer.model.TossDecision
@@ -171,6 +172,15 @@ class MatchSetupViewModel(
         val teamA = teamAName.trim()
         val teamB = teamBName.trim()
 
+        // req #1: whatever was typed by hand here (no saved squad picked, or a name not in
+        // one) is remembered from this point on — see RecentPlayersStore / ScoringViewModel's
+        // existingBowlers & availableIncomingBatsmen, which offer these as dropdown
+        // suggestions during live scoring exactly like a saved squad's players would be.
+        RecentPlayersStore.addNames(
+            appContext,
+            listOf(strikerName, nonStrikerName, openingBowlerName)
+        )
+
         viewModelScope.launch {
             val match = MatchEntity(
                 teamAName = teamA,
@@ -222,6 +232,10 @@ class MatchSetupViewModel(
             // — Rooms replace the old "every match gets a share code" per-match sharing (see
             // SYNC_SETUP.md). A match created with no active room stays purely local/offline.
             val room = activeRoom
+            // activeRoomCode has a custom get() (it derives from activeRoom now, per req #5's
+            // configureForRoom), so Kotlin can't smart-cast it to non-null after a plain
+            // `activeRoomCode != null` check — capture it in a local val first, same as every
+            // other custom-getter property here.
             val roomCode = activeRoomCode
             if (room != null && roomCode != null) {
                 // req: which team THIS device scores the 1st innings for, chosen explicitly

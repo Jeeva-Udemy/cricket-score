@@ -8,27 +8,34 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,6 +53,7 @@ import com.example.cricketscorer.viewmodel.HomeViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * req #1: Match History used to be an inline list at the bottom of the Home screen. It now
@@ -62,10 +70,22 @@ fun MatchHistoryScreen(
     onNavigateBack: () -> Unit,
     onOpenMatch: (matchId: Long) -> Unit
 ) {
-    val matches by viewModel.matches.collectAsState()
+    val allMatches by viewModel.matches.collectAsState()
     val selectedMatchIds by viewModel.selectedMatchIds.collectAsState()
     val isSelectionMode = selectedMatchIds.isNotEmpty()
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    // req #3: "show the matches based on the date we played. Keep an Icon like we have in Home
+    // page with the date if we select that it should show the list of matches played on that
+    // date." — a calendar icon opens a date picker; picking a date filters the list down to
+    // just that day's matches instead of the full history.
+    var showDatePicker by remember { mutableStateOf(false) }
+    var selectedDateMillis by remember { mutableStateOf<Long?>(null) }
+    val matches = if (selectedDateMillis != null) {
+        allMatches.filter { localDateKey(it.createdAt) == utcDateKey(selectedDateMillis!!) }
+    } else {
+        allMatches
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (isSelectionMode) {
@@ -101,6 +121,9 @@ fun MatchHistoryScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showDatePicker = true }) {
+                        Icon(imageVector = Icons.Default.CalendarMonth, contentDescription = "Filter by date")
+                    }
                     if (matches.isNotEmpty()) {
                         TextButton(onClick = { viewModel.selectAll() }) {
                             Text("Select")
@@ -110,6 +133,31 @@ fun MatchHistoryScreen(
             )
         }
 
+        // req #3: shows which date is currently filtering the list, with a quick way to
+        // clear it and go back to the full history.
+        selectedDateMillis?.let { millis ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AssistChip(
+                    onClick = { showDatePicker = true },
+                    label = { Text(utcDateDisplay(millis)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.CalendarMonth,
+                            contentDescription = null,
+                            modifier = Modifier.padding(0.dp)
+                        )
+                    }
+                )
+                TextButton(onClick = { selectedDateMillis = null }) {
+                    Text("Clear")
+                }
+            }
+        }
+
         if (matches.isEmpty()) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                 Card(
@@ -117,7 +165,11 @@ fun MatchHistoryScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Text(
-                        text = "No past matches found. Start a new match to see it here!",
+                        text = if (selectedDateMillis != null) {
+                            "No matches played on ${utcDateDisplay(selectedDateMillis!!)}."
+                        } else {
+                            "No past matches found. Start a new match to see it here!"
+                        },
                         modifier = Modifier.padding(16.dp),
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -126,7 +178,7 @@ fun MatchHistoryScreen(
         } else {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                contentPadding = PaddingValues(16.dp),
                 modifier = Modifier.fillMaxWidth().fillMaxSize()
             ) {
                 items(matches, key = { it.matchId }) { match ->
@@ -179,6 +231,26 @@ fun MatchHistoryScreen(
                 }
             }
         )
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    selectedDateMillis = datePickerState.selectedDateMillis
+                    showDatePicker = false
+                }) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
     }
 }
 
@@ -253,6 +325,32 @@ private fun MatchHistoryCard(
                     )
                 }
 
+                // req #4: "we should be able to differentiate the normal match and room
+                // match" — a match only ever gets a shareCode when it was started from inside
+                // a Room (see MatchSetupViewModel.configureForRoom); a plain "Start Match"
+                // from Home never sets one, so its presence alone tells the two apart.
+                val isRoomMatch = !match.shareCode.isNullOrBlank()
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = if (isRoomMatch) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    }
+                ) {
+                    Text(
+                        text = if (isRoomMatch) "Room Match" else "Local Match",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isRoomMatch) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+
                 Text(
                     text = "Played on: $dateStr",
                     style = MaterialTheme.typography.bodySmall,
@@ -287,3 +385,24 @@ internal fun formatAward(award: PlayerStatsCalculator.PlayerAward): String {
     val bowlingPart = if (award.ballsBowled > 0) "${award.wickets}/${award.runsConceded}" else null
     return listOfNotNull(battingPart, bowlingPart).joinToString(" & ").ifBlank { "${award.runs} runs" }
 }
+
+// req #3: date-filter helpers. match.createdAt is a plain System.currentTimeMillis() value,
+// naturally read in the DEVICE's own timezone; DatePickerState.selectedDateMillis, on the
+// other hand, is documented to always be UTC midnight of the day the user tapped —
+// comparing the two directly (or via the device timezone on both) would shift the selected
+// day by however far the device is from UTC. Formatting each with the timezone it actually
+// means keeps "the day I tapped" and "the day this match's timestamp falls on, locally"
+// lined up correctly everywhere. SimpleDateFormat is not thread-safe, so a fresh instance is
+// created per call rather than shared.
+private fun localDateKey(millis: Long): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(millis))
+
+private fun utcDateKey(millis: Long): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        .apply { timeZone = TimeZone.getTimeZone("UTC") }
+        .format(Date(millis))
+
+private fun utcDateDisplay(millis: Long): String =
+    SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+        .apply { timeZone = TimeZone.getTimeZone("UTC") }
+        .format(Date(millis))

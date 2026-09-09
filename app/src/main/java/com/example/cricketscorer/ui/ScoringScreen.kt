@@ -443,14 +443,29 @@ private fun LiveScoreTabContent(
                 }
             }
 
-            // Batsmen + bowler compact row
+            // Batsmen + bowler row.
+            // req #5: "along side the Batsman name we need to show the score and ball faced
+            // as well and also make the text a bit larger" — batsmanStats already computes
+            // runs/balls faced per name from the ball-by-ball log; look each one up by name
+            // instead of adding new state, and bump the font sizes up from the old
+            // 13sp/12sp so the whole row reads more like a real scoreboard.
+            val strikerStat = state.batsmanStats.firstOrNull { it.name == innings.strikerName }
+            val nonStrikerStat = state.batsmanStats.firstOrNull { it.name == innings.nonStrikerName }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("⚔ ${innings.strikerName}*", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text("  ${innings.nonStrikerName}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "⚔ ${innings.strikerName}* ${strikerStat?.runs ?: 0}(${strikerStat?.ballsFaced ?: 0})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    Text(
+                        "  ${innings.nonStrikerName} ${nonStrikerStat?.runs ?: 0}(${nonStrikerStat?.ballsFaced ?: 0})",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("🏏 ${innings.currentBowlerName}", fontSize = 13.sp)
+                    Text("🏏 ${innings.currentBowlerName}", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 }
             }
 

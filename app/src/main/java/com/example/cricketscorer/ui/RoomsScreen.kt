@@ -311,6 +311,15 @@ private fun RoomListCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // req #2: "Everytime we create the Room match it should show the Date by
+                // ordering it as newest first" — the list itself was already newest-first
+                // (see RoomStore.getRoomHistory's sortedByDescending), it just never showed
+                // the date anywhere on the card.
+                Text(
+                    "Created ${formatRelativeTime(room.createdAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             if (isActive) {
                 Text(

@@ -10,6 +10,7 @@ import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.data.RecentPlayersStore
 import com.example.cricketscorer.data.RoomStore
 import com.example.cricketscorer.model.DismissedEnd
 import com.example.cricketscorer.model.ExtraType
@@ -168,6 +169,10 @@ data class ScoringUiState(
             if (current.isNotBlank()) set.add(current)
             set.addAll(fromBalls)
             set.addAll(bowlingSquadPlayerNames)
+            // req #1: "the dropdown just like we have for Squad" even when this match has no
+            // saved squad linked — fall back to every name ever typed anywhere in the app (see
+            // RecentPlayersStore) so a name only has to be typed once, ever.
+            set.addAll(RecentPlayersStore.getAll(appContext))
             return set.toList()
         }
 
@@ -184,7 +189,10 @@ data class ScoringUiState(
         get() {
             val inn = currentInnings
             val onCrease = setOfNotNull(inn?.strikerName, inn?.nonStrikerName)
-            return battingSquadPlayerNames.filter { it !in onCrease && it !in outBatsmanNames }
+            // req #1: same "no saved squad" fallback as existingBowlers above — remembered
+            // names are still excluded if they're already batting or already out this innings.
+            val pool = battingSquadPlayerNames.toSet() + RecentPlayersStore.getAll(appContext)
+            return pool.filter { it !in onCrease && it !in outBatsmanNames }
         }
 
     val overSummaries: List<OverSummary>
@@ -651,6 +659,9 @@ class ScoringViewModel(
     }
 
     fun updateBatsmanNames(strikerName: String, nonStrikerName: String) {
+        // req #1: remember whatever was typed here (a no-op for names already in the store)
+        // so it's offered as a dropdown suggestion everywhere from now on.
+        RecentPlayersStore.addNames(appContext, listOf(strikerName, nonStrikerName))
         viewModelScope.launch {
             val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
@@ -662,6 +673,7 @@ class ScoringViewModel(
     }
 
     fun updateBowlerName(bowlerName: String) {
+        RecentPlayersStore.addName(appContext, bowlerName)
         viewModelScope.launch {
             val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
@@ -677,6 +689,7 @@ class ScoringViewModel(
      * the one-time prompt flag.
      */
     fun confirmOpeningPlayers(strikerName: String, nonStrikerName: String, bowlerName: String) {
+        RecentPlayersStore.addNames(appContext, listOf(strikerName, nonStrikerName, bowlerName))
         viewModelScope.launch {
             val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
@@ -726,6 +739,7 @@ class ScoringViewModel(
         newBatsmanName: String = "",
         dismissedEnd: DismissedEnd = DismissedEnd.STRIKER
     ) {
+        RecentPlayersStore.addName(appContext, newBatsmanName)
         applyDelivery(
             runs = runsCompleted,
             extraType = ExtraType.NONE,
