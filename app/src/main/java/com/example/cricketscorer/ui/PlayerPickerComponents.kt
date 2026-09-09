@@ -1,5 +1,6 @@
 package com.example.cricketscorer.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -92,16 +93,22 @@ internal fun DropdownItemDivider() {
 }
 
 /**
- * A text field with an optional dropdown of player names to pick from.
- * Replaces the old horizontal-scrolling chip row — the dropdown scrolls
- * vertically so long squad lists are fully accessible without horizontal swiping.
- * Free-text entry is always available when the list is empty or the player isn't listed.
+ * A dropdown to quick-pick a known player name, PLUS a separate, always-editable text field
+ * to type one in by hand — deliberately mirroring the Select Squad dropdown + Team Name text
+ * field pair used above on the Match Setup screen (two distinct fields, not one merged
+ * autocomplete box), since a single combo field that both showed suggestions and accepted
+ * typing read as "I can only pick from a list, I can't type a name" (req: "we need both
+ * dropdown and field to enter batsman/bowler name just like we do it for squad").
+ *
+ * The dropdown only appears when there's actually something to offer — a squad linked to
+ * this match, or a name typed here before elsewhere in the app (see RecentPlayersStore) — an
+ * empty [availablePlayerNames] just shows the plain text field.
  *
  * req #2: whatever is typed by hand always starts with a capital letter.
- * req #4: picking a name (from the dropdown, or by typing + tapping "Next" on the
- * keyboard) automatically moves focus to [nextFocusRequester] and closes the keyboard —
- * so on the last field of a form, pass the "confirm" button's own FocusRequester as
- * [nextFocusRequester] to have it highlighted with the keyboard dismissed.
+ * req #4: picking a name from the dropdown automatically moves focus to
+ * [nextFocusRequester] and closes the keyboard — so on the last field of a form, pass the
+ * "confirm" button's own FocusRequester as [nextFocusRequester] to have it highlighted with
+ * the keyboard dismissed.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,10 +132,6 @@ fun PlayerPickerField(
         onValueChange(capitalizeFirstLetter(raw))
     }
 
-    val fieldModifier = modifier
-        .fillMaxWidth()
-        .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
-
     val keyboardOptions = KeyboardOptions(
         capitalization = KeyboardCapitalization.Words,
         imeAction = if (nextFocusRequester != null) ImeAction.Next else ImeAction.Done
@@ -138,8 +141,47 @@ fun PlayerPickerField(
         onDone = { keyboardController?.hide() }
     )
 
-    if (availablePlayerNames.isEmpty()) {
-        // No squad linked — plain text field only
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (availablePlayerNames.isNotEmpty()) {
+            var expanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it }
+            ) {
+                OutlinedTextField(
+                    value = value.ifBlank { "Select $label" },
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Pick from list") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier
+                        .menuAnchor()
+                        .fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
+                    modifier = Modifier.heightIn(max = 220.dp)
+                ) {
+                    availablePlayerNames.forEach { name ->
+                        DropdownMenuItem(
+                            text = { Text(name) },
+                            onClick = {
+                                onValueChange(name)
+                                expanded = false
+                                advanceFocus()
+                            },
+                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                        )
+                        // req #4: same under-each-item border treatment as SquadDropdown above.
+                        DropdownItemDivider()
+                    }
+                }
+            }
+        }
+
+        // The manual entry field — always present and always editable, regardless of
+        // whether a dropdown is shown above it, so a name can always be typed by hand.
         OutlinedTextField(
             value = value,
             onValueChange = { changeAndCapitalize(it) },
@@ -147,50 +189,9 @@ fun PlayerPickerField(
             singleLine = true,
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
-            modifier = fieldModifier
+            modifier = Modifier
+                .fillMaxWidth()
+                .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
         )
-        return
-    }
-
-    var expanded by remember { mutableStateOf(false) }
-
-    Column(modifier = modifier) {
-        ExposedDropdownMenuBox(
-            expanded = expanded,
-            onExpandedChange = { expanded = it }
-        ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { changeAndCapitalize(it); expanded = false },
-                label = { Text(label) },
-                singleLine = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                keyboardOptions = keyboardOptions,
-                keyboardActions = keyboardActions,
-                modifier = Modifier
-                    .menuAnchor()
-                    .fillMaxWidth()
-                    .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
-            )
-            ExposedDropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.heightIn(max = 220.dp)
-            ) {
-                availablePlayerNames.forEach { name ->
-                    DropdownMenuItem(
-                        text = { Text(name) },
-                        onClick = {
-                            onValueChange(name)
-                            expanded = false
-                            advanceFocus()
-                        },
-                        contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                    )
-                    // req #4: same under-each-item border treatment as SquadDropdown above.
-                    DropdownItemDivider()
-                }
-            }
-        }
     }
 }

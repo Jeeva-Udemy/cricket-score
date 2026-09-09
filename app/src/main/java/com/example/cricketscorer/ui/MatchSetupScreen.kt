@@ -240,16 +240,17 @@ fun MatchSetupScreen(
             // Whichever team bats first supplies the opener player-picker chips
             val battingFirstIsA = (viewModel.tossDecision == TossDecision.BAT) ==
                 (viewModel.tossWinnerTeam == viewModel.teamAName)
-            val openingPlayerNames = if (battingFirstIsA) {
-                squadAPlayers.map { it.name }
-            } else {
-                squadBPlayers.map { it.name }
-            }
-            val bowlingPlayerNames = if (battingFirstIsA) {
-                squadBPlayers.map { it.name }
-            } else {
-                squadAPlayers.map { it.name }
-            }
+            // req #1/#2: union with names remembered from anywhere else in the app (see
+            // MatchSetupViewModel.recentPlayerNames) so the dropdown still has something to
+            // offer even when neither team has a saved squad linked.
+            val openingPlayerNames = (
+                (if (battingFirstIsA) squadAPlayers.map { it.name } else squadBPlayers.map { it.name }) +
+                    viewModel.recentPlayerNames
+            ).distinct()
+            val bowlingPlayerNames = (
+                (if (battingFirstIsA) squadBPlayers.map { it.name } else squadAPlayers.map { it.name }) +
+                    viewModel.recentPlayerNames
+            ).distinct()
 
             // req: striker, non-striker, and opening bowler are mandatory — no default
             // placeholder names are ever saved. The user must pick from the dropdown

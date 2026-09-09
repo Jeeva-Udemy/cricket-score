@@ -74,7 +74,13 @@ data class ScoringUiState(
     // req #3/#4: which team THIS device is scoring for (local-only, see
     // DeviceMatchRoleStore). Null for a purely local/unshared match, or a shared match that
     // was created/joined before this feature existed.
-    val myTeam: String? = null
+    val myTeam: String? = null,
+    // req #1: "the dropdown just like we have for Squad" even without a saved squad — every
+    // player name ever typed anywhere in the app (see RecentPlayersStore), refreshed by
+    // ScoringViewModel. Threaded through state rather than read directly from
+    // RecentPlayersStore inside existingBowlers/availableIncomingBatsmen below, because this
+    // is a plain data class with no Context of its own to read SharedPreferences with.
+    val recentPlayerNames: Set<String> = emptySet()
 ) {
     /** True once this match has ever been shared (has a Cloud Sync code) — editing is only
      *  restricted to one device at a time for shared matches; a solo/local match is always
@@ -170,9 +176,9 @@ data class ScoringUiState(
             set.addAll(fromBalls)
             set.addAll(bowlingSquadPlayerNames)
             // req #1: "the dropdown just like we have for Squad" even when this match has no
-            // saved squad linked — fall back to every name ever typed anywhere in the app (see
-            // RecentPlayersStore) so a name only has to be typed once, ever.
-            set.addAll(RecentPlayersStore.getAll(appContext))
+            // saved squad linked — fall back to every name ever typed anywhere in the app so a
+            // name only has to be typed once, ever.
+            set.addAll(recentPlayerNames)
             return set.toList()
         }
 
@@ -191,7 +197,7 @@ data class ScoringUiState(
             val onCrease = setOfNotNull(inn?.strikerName, inn?.nonStrikerName)
             // req #1: same "no saved squad" fallback as existingBowlers above — remembered
             // names are still excluded if they're already batting or already out this innings.
-            val pool = battingSquadPlayerNames.toSet() + RecentPlayersStore.getAll(appContext)
+            val pool = battingSquadPlayerNames.toSet() + recentPlayerNames
             return pool.filter { it !in onCrease && it !in outBatsmanNames }
         }
 
@@ -421,7 +427,16 @@ class ScoringViewModel(
         observedInningsIds.clear()
         val myTeam = DeviceMatchRoleStore.getMyTeam(appContext, matchId)
         _uiState.value = _uiState.value.copy(myTeam = myTeam)
+        refreshRecentPlayerNames()
         observeMatchData()
+    }
+
+    /** req #1: pulls the latest remembered-names set (see RecentPlayersStore) into
+     *  [ScoringUiState.recentPlayerNames] — that Context-reading store lives here on the
+     *  ViewModel, not on the plain data class, so this is how the dropdown lists in
+     *  ScoringUiState actually see new names right after they're typed. */
+    private fun refreshRecentPlayerNames() {
+        _uiState.value = _uiState.value.copy(recentPlayerNames = RecentPlayersStore.getAll(appContext))
     }
 
     /** (Re)attaches the Firestore listener for this match's share code, if it has one. */
@@ -662,6 +677,7 @@ class ScoringViewModel(
         // req #1: remember whatever was typed here (a no-op for names already in the store)
         // so it's offered as a dropdown suggestion everywhere from now on.
         RecentPlayersStore.addNames(appContext, listOf(strikerName, nonStrikerName))
+        refreshRecentPlayerNames()
         viewModelScope.launch {
             val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
@@ -674,6 +690,7 @@ class ScoringViewModel(
 
     fun updateBowlerName(bowlerName: String) {
         RecentPlayersStore.addName(appContext, bowlerName)
+        refreshRecentPlayerNames()
         viewModelScope.launch {
             val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
@@ -690,6 +707,7 @@ class ScoringViewModel(
      */
     fun confirmOpeningPlayers(strikerName: String, nonStrikerName: String, bowlerName: String) {
         RecentPlayersStore.addNames(appContext, listOf(strikerName, nonStrikerName, bowlerName))
+        refreshRecentPlayerNames()
         viewModelScope.launch {
             val liveInn = fetchLiveInnings() ?: return@launch
             val updated = liveInn.copy(
@@ -740,6 +758,7 @@ class ScoringViewModel(
         dismissedEnd: DismissedEnd = DismissedEnd.STRIKER
     ) {
         RecentPlayersStore.addName(appContext, newBatsmanName)
+        refreshRecentPlayerNames()
         applyDelivery(
             runs = runsCompleted,
             extraType = ExtraType.NONE,

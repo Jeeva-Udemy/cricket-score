@@ -39,6 +39,13 @@ class MatchSetupViewModel(
 
     private var roomConfigured = false
 
+    // req #1/#2: "we need both dropdown and field to enter batsman/bowler name just like we
+    // do it for squad" — same remembered-names fallback as the live-scoring dropdowns (see
+    // ScoringViewModel), so the Striker/Non-Striker/Opening Bowler fields on this screen also
+    // offer a dropdown even when no squad is linked to either team. Read once at construction
+    // — nothing on this one-time setup screen needs it to update after that.
+    val recentPlayerNames: Set<String> = RecentPlayersStore.getAll(appContext)
+
     /** Called once, right after this screen is shown (see MatchSetupScreen's
      *  LaunchedEffect(roomCode)). [roomCode] is null when reached from Home's "Start Match" —
      *  the match stays purely local/offline, single-device, and never becomes a Room match.
