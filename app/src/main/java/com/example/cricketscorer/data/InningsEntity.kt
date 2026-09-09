@@ -6,7 +6,8 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * One row per innings (there will be 1 or 2 rows per match).
+ * One row per innings (there will be 1 or 2 rows per match — plus, since req #3, one more
+ * pair per Super Over played: 3/4, then 5/6 if that itself ties, and so on).
  * Holds the running score total that the Scoring screen renders.
  *
  * Batsmen are tracked only by an incrementing "batsman number" (1, 2, 3, ...)
@@ -49,5 +50,9 @@ data class InningsEntity(
     val currentBowlerName: String = "Bowler 1",
     val nextBatsmanNumber: Int = 3,
     val target: Int? = null,
-    val isCompleted: Boolean = false
+    val isCompleted: Boolean = false,
+    /** req #3: true for a Super Over innings (numbered 3/4, 5/6, ...) — these are capped at 1
+     *  over / 2 wickets instead of the match's normal totalOvers/playersPerTeam (see
+     *  ScoringViewModel.applyDelivery), everything else about scoring one is unchanged. */
+    val isSuperOver: Boolean = false
 )

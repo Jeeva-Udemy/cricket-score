@@ -55,6 +55,11 @@ class CricketRepository(private val dao: CricketDao) {
         updatedMatch: MatchEntity
     ): Long? = dao.finishInningsAtomic(completedInnings, nextInnings, updatedMatch)
 
+    /** req #3: reopens a tied, completed match onto a fresh Super Over innings — see
+     *  [CricketDao.startSuperOverAtomic]. */
+    suspend fun startSuperOver(newInnings: InningsEntity, updatedMatch: MatchEntity): Long =
+        dao.startSuperOverAtomic(newInnings, updatedMatch)
+
     // ---------- Cloud Sync (Firestore) ----------
     // A "live match" mirror is much smaller than the full [BackupSnapshot] above: only the
     // one match, its innings, their ball events, and the squads/players actually linked to

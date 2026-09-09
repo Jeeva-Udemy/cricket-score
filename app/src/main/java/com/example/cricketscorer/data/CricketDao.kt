@@ -245,4 +245,14 @@ interface CricketDao {
         updateMatch(updatedMatch)
         return nextInningsId
     }
+
+    /** req #3: reopens a tied, completed match onto a fresh Super Over innings, atomically —
+     *  same shape as [finishInningsAtomic] (a new innings row + the match row updated
+     *  together), just without an existing innings to also mark completed here. */
+    @Transaction
+    suspend fun startSuperOverAtomic(newInnings: InningsEntity, updatedMatch: MatchEntity): Long {
+        val newInningsId = insertInnings(newInnings)
+        updateMatch(updatedMatch)
+        return newInningsId
+    }
 }

@@ -192,20 +192,35 @@ fun ScoringScreen(
         )
 
         // ---- Top Innings Tab Switcher ----
-        TabRow(selectedTabIndex = state.selectedTabIndex) {
-            val inn1 = allInnings.firstOrNull { it.inningsNumber == 1 }
-            val inn2 = allInnings.firstOrNull { it.inningsNumber == 2 }
+        // req #3: once a Super Over starts (innings 3+), there's no "1st/2nd innings" to
+        // toggle between any more — ScoringUiState.currentInnings itself switches to always
+        // showing the live Super Over innings at that point, so this tab bar would just be
+        // stale/misleading. Swap it for a plain banner naming which team is batting instead.
+        if ((state.match?.currentInningsNumber ?: 1) < 3) {
+            TabRow(selectedTabIndex = state.selectedTabIndex) {
+                val inn1 = allInnings.firstOrNull { it.inningsNumber == 1 }
+                val inn2 = allInnings.firstOrNull { it.inningsNumber == 2 }
 
-            Tab(
-                selected = state.selectedTabIndex == 0,
-                onClick = { viewModel.selectInningsTab(0) },
-                text = { Text("1st Inn: ${inn1?.battingTeam ?: "Team 1"}") }
-            )
-            Tab(
-                selected = state.selectedTabIndex == 1,
-                onClick = { viewModel.selectInningsTab(1) },
-                text = { Text("2nd Inn: ${inn2?.battingTeam ?: "Team 2"}") }
-            )
+                Tab(
+                    selected = state.selectedTabIndex == 0,
+                    onClick = { viewModel.selectInningsTab(0) },
+                    text = { Text("1st Inn: ${inn1?.battingTeam ?: "Team 1"}") }
+                )
+                Tab(
+                    selected = state.selectedTabIndex == 1,
+                    onClick = { viewModel.selectInningsTab(1) },
+                    text = { Text("2nd Inn: ${inn2?.battingTeam ?: "Team 2"}") }
+                )
+            }
+        } else {
+            Surface(color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "⚡ Super Over — ${innings.battingTeam} batting",
+                    modifier = Modifier.padding(12.dp),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
         }
 
         // ---- Sub Tab Bar: Live Score | Scorecard | Overs ----
@@ -365,7 +380,7 @@ fun ScoringScreen(
         CompleteInningsDialog(
             currentRuns = innings.totalRuns,
             currentWickets = innings.wickets,
-            maxWickets = (state.match?.playersPerTeam ?: 11) - 1,
+            maxWickets = if (innings.isSuperOver) 2 else (state.match?.playersPerTeam ?: 11) - 1,
             onDismiss = { showCompleteInningsDialog = false },
             onConfirm = { runs, wickets ->
                 viewModel.completeInningsManually(runs, wickets)
@@ -424,7 +439,10 @@ private fun LiveScoreTabContent(
                     fontWeight = FontWeight.Bold
                 )
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("Ovs: ${state.oversDisplay}/${match.totalOvers}", style = MaterialTheme.typography.bodyMedium)
+                    // req #3: a Super Over is always exactly 1 over, regardless of the match's
+                    // normal overs — showing "/${match.totalOvers}" here would be misleading.
+                    val oversLimitDisplay = if (innings.isSuperOver) 1 else match.totalOvers
+                    Text("Ovs: ${state.oversDisplay}/$oversLimitDisplay", style = MaterialTheme.typography.bodyMedium)
                     Text("RR: %.2f".format(state.runRate), style = MaterialTheme.typography.bodySmall)
                     state.target?.let {
                         Text(
@@ -512,6 +530,19 @@ private fun LiveScoreTabContent(
                         Text(resultMessage, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                         if (state.canEditScore) {
                             OutlinedButton(onClick = { viewModel.undoLastBall() }) { Text("Undo Last Ball") }
+                        }
+                        // req #3: "an option to start a super over inside the same match" —
+                        // offered right here the moment the match ends tied, and reappears the
+                        // same way if the Super Over itself ties too (see
+                        // ScoringUiState.canStartSuperOver, which just compares the two
+                        // innings that most recently decided things, whichever pair they are).
+                        if (state.canStartSuperOver && state.canEditScore) {
+                            Button(
+                                onClick = { viewModel.startSuperOver() },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Start Super Over")
+                            }
                         }
                     }
                 }
@@ -603,7 +634,11 @@ private fun LiveScoreTabContent(
                 }
 
                 Text(
-                    "Players: ${match.playersPerTeam} per side  •  All out at ${match.playersPerTeam - 1} wickets",
+                    if (innings.isSuperOver) {
+                        "Super Over: 1 over  •  Ends at 2 wickets"
+                    } else {
+                        "Players: ${match.playersPerTeam} per side  •  All out at ${match.playersPerTeam - 1} wickets"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -963,7 +998,7 @@ private fun EditBatsmenDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 PlayerPickerField(
-                    label = "Striker Name *",
+                    label = "Striker",
                     value = strikerName,
                     onValueChange = { strikerName = it },
                     availablePlayerNames = availablePlayers.filter { it != nonStrikerName },
@@ -971,7 +1006,7 @@ private fun EditBatsmenDialog(
                     nextFocusRequester = nonStrikerFocusRequester
                 )
                 PlayerPickerField(
-                    label = "Non-Striker Name *",
+                    label = "Non-Striker",
                     value = nonStrikerName,
                     onValueChange = { nonStrikerName = it },
                     availablePlayerNames = availablePlayers.filter { it != strikerName },
@@ -1023,7 +1058,7 @@ private fun EditBowlerDialog(
             // Single dropdown picker — shows the full bowlers list with scroll,
             // plus allows free-text for a new name not in the list.
             PlayerPickerField(
-                label = "Bowler Name *",
+                label = "Bowler",
                 value = bowlerName,
                 onValueChange = { bowlerName = it },
                 availablePlayerNames = existingBowlers,
@@ -1081,7 +1116,7 @@ private fun SelectOpeningPlayersDialog(
                     style = MaterialTheme.typography.bodySmall
                 )
                 PlayerPickerField(
-                    label = "Striker Name *",
+                    label = "Striker",
                     value = strikerName,
                     onValueChange = { strikerName = it },
                     availablePlayerNames = availableBatsmen.filter { it != nonStrikerName },
@@ -1089,7 +1124,7 @@ private fun SelectOpeningPlayersDialog(
                     nextFocusRequester = nonStrikerFocusRequester
                 )
                 PlayerPickerField(
-                    label = "Non-Striker Name *",
+                    label = "Non-Striker",
                     value = nonStrikerName,
                     onValueChange = { nonStrikerName = it },
                     availablePlayerNames = availableBatsmen.filter { it != strikerName },
@@ -1097,7 +1132,7 @@ private fun SelectOpeningPlayersDialog(
                     nextFocusRequester = bowlerFocusRequester
                 )
                 PlayerPickerField(
-                    label = "Opening Bowler Name *",
+                    label = "Bowler",
                     value = bowlerName,
                     onValueChange = { bowlerName = it },
                     availablePlayerNames = availableBowlers,
@@ -1182,7 +1217,7 @@ private fun WicketDialog(
                 }
                 Spacer(Modifier.height(4.dp))
                 PlayerPickerField(
-                    label = "Incoming Batsman Name *",
+                    label = "Incoming Batsman",
                     value = newBatsmanName,
                     onValueChange = { newBatsmanName = it },
                     availablePlayerNames = availableIncomingBatsmen,

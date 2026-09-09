@@ -257,7 +257,7 @@ fun MatchSetupScreen(
             // (when a squad is linked) or type a name themselves.
             Text("Opening Batsmen (required)", style = MaterialTheme.typography.titleMedium)
             PlayerPickerField(
-                label = "Striker Name *",
+                label = "Striker",
                 value = viewModel.strikerName,
                 onValueChange = { viewModel.strikerName = it },
                 availablePlayerNames = openingPlayerNames.filter { it != viewModel.nonStrikerName },
@@ -266,7 +266,7 @@ fun MatchSetupScreen(
             )
             Spacer(Modifier.height(4.dp))
             PlayerPickerField(
-                label = "Non-Striker Name *",
+                label = "Non-Striker",
                 value = viewModel.nonStrikerName,
                 onValueChange = { viewModel.nonStrikerName = it },
                 availablePlayerNames = openingPlayerNames.filter { it != viewModel.strikerName },
@@ -276,7 +276,7 @@ fun MatchSetupScreen(
 
             Text("Opening Bowler (required)", style = MaterialTheme.typography.titleMedium)
             PlayerPickerField(
-                label = "Opening Bowler Name *",
+                label = "Bowler",
                 value = viewModel.openingBowlerName,
                 onValueChange = { viewModel.openingBowlerName = it },
                 availablePlayerNames = bowlingPlayerNames,

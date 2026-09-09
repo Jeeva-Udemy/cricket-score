@@ -28,5 +28,9 @@ data class MatchEntity(
     /** Cloud Sync (Firestore): short code the other device enters via "Join Shared Match"
      *  to mirror this match live. Null means the match has never been shared. See
      *  [com.example.cricketscorer.sync.CloudSync]. */
-    val shareCode: String? = null
+    val shareCode: String? = null,
+    /** req #3: true once a Super Over has been played on this match (win/loss decided by it,
+     *  or the Super Over itself tied and another was needed) — set the moment one is started,
+     *  kept true even if it's later undone, so Match History can badge it either way. */
+    val wasSuperOver: Boolean = false
 )

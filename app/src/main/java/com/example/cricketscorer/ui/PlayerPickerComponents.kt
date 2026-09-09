@@ -95,15 +95,17 @@ internal fun DropdownItemDivider() {
 /**
  * A dropdown to quick-pick a known player name, PLUS a separate, always-editable text field
  * to type one in by hand — laid out side by side, exactly like the Select Squad dropdown +
- * Team Name text field pair on the Match Setup screen (req: "Keep the batsman/bowler dropdown
- * and manual entry field side by side just like we did it for Squad selection in Start
- * Match" — this had been stacked in a Column instead of a Row, the one visible difference from
- * that pattern).
+ * Team Name text field pair on the Match Setup screen.
  *
- * The dropdown only appears when there's actually something to offer — a squad linked to
- * this match, or a name typed here before elsewhere in the app (see RecentPlayersStore) — an
- * empty [availablePlayerNames] just shows the plain text field at full width, same as the
- * Squad row would if there were no squads to list.
+ * req: the dropdown box is ALWAYS rendered (never swapped out for a lone full-width field) so
+ * its size never shifts depending on whether there happen to be any names to offer yet — it's
+ * simply disabled (greyed out, "No names yet") when [availablePlayerNames] is empty, same
+ * width either way.
+ *
+ * req: [label] is meant to be short ("Striker", "Bowler", ...) — it's shown as-is on the
+ * manual-entry field and as "Select $label" / "No $label yet" on the dropdown, so a short word
+ * reads naturally in both places (the old long labels like "Select Striker Name *" read
+ * awkwardly once duplicated that way).
  *
  * req #2: whatever is typed by hand always starts with a capital letter.
  * req #4: picking a name from the dropdown automatically moves focus to
@@ -141,67 +143,56 @@ fun PlayerPickerField(
         onNext = { advanceFocus() },
         onDone = { keyboardController?.hide() }
     )
+    val hasNames = availablePlayerNames.isNotEmpty()
 
     // req: side by side, matching the Squad row's Row(spacedBy(12.dp)) { ...weight(1f)...
-    // weight(1f) } exactly — only fall back to a single full-width field when there's no
-    // dropdown to put next to it (nothing to list in availablePlayerNames).
-    if (availablePlayerNames.isNotEmpty()) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = modifier.fillMaxWidth()
+    // weight(1f) } exactly — and always both fields, so the box size stays fixed regardless
+    // of whether there's anything to pick from right now.
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        var expanded by remember { mutableStateOf(false) }
+        ExposedDropdownMenuBox(
+            expanded = expanded && hasNames,
+            onExpandedChange = { if (hasNames) expanded = it },
+            modifier = Modifier.weight(1f)
         ) {
-            var expanded by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = it },
-                modifier = Modifier.weight(1f)
+            OutlinedTextField(
+                value = if (hasNames) value.ifBlank { "Select $label" } else "No $label yet",
+                onValueChange = {},
+                readOnly = true,
+                enabled = hasNames,
+                label = { Text("Pick from list") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && hasNames) },
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+            ExposedDropdownMenu(
+                expanded = expanded && hasNames,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.heightIn(max = 220.dp)
             ) {
-                OutlinedTextField(
-                    value = value.ifBlank { "Select $label" },
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Pick from list") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                    modifier = Modifier
-                        .menuAnchor()
-                        .fillMaxWidth()
-                )
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                    modifier = Modifier.heightIn(max = 220.dp)
-                ) {
-                    availablePlayerNames.forEach { name ->
-                        DropdownMenuItem(
-                            text = { Text(name) },
-                            onClick = {
-                                onValueChange(name)
-                                expanded = false
-                                advanceFocus()
-                            },
-                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                        )
-                        // req #4: same under-each-item border treatment as SquadDropdown above.
-                        DropdownItemDivider()
-                    }
+                availablePlayerNames.forEach { name ->
+                    DropdownMenuItem(
+                        text = { Text(name) },
+                        onClick = {
+                            onValueChange(name)
+                            expanded = false
+                            advanceFocus()
+                        },
+                        contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                    )
+                    // req #4: same under-each-item border treatment as SquadDropdown above.
+                    DropdownItemDivider()
                 }
             }
-
-            // The manual entry field — always present and always editable, regardless of
-            // whether a dropdown sits next to it, so a name can always be typed by hand.
-            OutlinedTextField(
-                value = value,
-                onValueChange = { changeAndCapitalize(it) },
-                label = { Text(label) },
-                singleLine = true,
-                keyboardOptions = keyboardOptions,
-                keyboardActions = keyboardActions,
-                modifier = Modifier
-                    .weight(1f)
-                    .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
-            )
         }
-    } else {
+
+        // The manual entry field — always present and always editable, regardless of
+        // whether the dropdown next to it has anything to offer, so a name can always be
+        // typed by hand.
         OutlinedTextField(
             value = value,
             onValueChange = { changeAndCapitalize(it) },
@@ -209,8 +200,8 @@ fun PlayerPickerField(
             singleLine = true,
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
-            modifier = modifier
-                .fillMaxWidth()
+            modifier = Modifier
+                .weight(1f)
                 .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
         )
     }

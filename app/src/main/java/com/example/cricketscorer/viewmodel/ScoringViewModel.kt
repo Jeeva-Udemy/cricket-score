@@ -134,6 +134,13 @@ data class ScoringUiState(
     val currentInnings: InningsEntity?
         get() {
             if (allInnings.isEmpty()) return null
+            val activeNumber = match?.currentInningsNumber ?: 1
+            // req #3: once a Super Over is under way (innings 3+), the 1st/2nd innings tab
+            // toggle no longer applies — always show the live Super Over innings directly
+            // instead of whatever selectedTabIndex happened to be left on.
+            if (activeNumber >= 3) {
+                return allInnings.firstOrNull { it.inningsNumber == activeNumber } ?: allInnings.lastOrNull()
+            }
             val targetNum = if (selectedTabIndex == 1) 2 else 1
             return allInnings.firstOrNull { it.inningsNumber == targetNum }
                 ?: allInnings.lastOrNull()
@@ -170,7 +177,8 @@ data class ScoringUiState(
         get() {
             val balls = selectedInningsBallEvents
             val fromBalls = balls.map { it.bowlerName }.filter { it.isNotBlank() }
-            val current = currentInnings?.currentBowlerName ?: ""
+            val inn = currentInnings
+            val current = inn?.currentBowlerName ?: ""
             val set = mutableSetOf<String>()
             if (current.isNotBlank()) set.add(current)
             set.addAll(fromBalls)
@@ -179,6 +187,16 @@ data class ScoringUiState(
             // saved squad linked — fall back to every name ever typed anywhere in the app so a
             // name only has to be typed once, ever.
             set.addAll(recentPlayerNames)
+            // req #2: "the same bowler can't bowl the continuous overs" — once their over has
+            // completed and the new over hasn't started yet (no ball bowled), they must not be
+            // offered again for the very next over. While their own over is still IN progress,
+            // though, they stay in the list — that's what lets a mis-typed bowler name be
+            // corrected mid-over via the manual "Change Bowler" button without this rule
+            // getting in the way.
+            val justFinishedOwnOver = inn != null && inn.completedOvers > 0 && inn.ballsThisOver == 0
+            if (justFinishedOwnOver && current.isNotBlank()) {
+                set.remove(current)
+            }
             return set.toList()
         }
 
@@ -358,9 +376,29 @@ data class ScoringUiState(
         get() {
             val m = match ?: return null
             val inn = currentInnings ?: return null
-            val totalBalls = m.totalOvers * 6
+            // req #3: a Super Over is always exactly 1 over regardless of the match's normal
+            // totalOvers.
+            val totalBalls = if (inn.isSuperOver) 6 else m.totalOvers * 6
             val bowled = inn.completedOvers * 6 + inn.ballsThisOver
             return (totalBalls - bowled).coerceAtLeast(0)
+        }
+
+    /**
+     * req #3: "keep an option to start a super over inside the same match" — true once the
+     * match has ended with the two innings that just decided it (whichever pair — the normal
+     * 1st/2nd innings, or a Super Over pair if one's already been played) tied on runs.
+     * Compared straight from the innings data rather than parsed out of [resultSummary] text,
+     * so it also naturally re-offers a further Super Over if one itself ends tied too.
+     */
+    val canStartSuperOver: Boolean
+        get() {
+            val m = match ?: return false
+            if (!m.isCompleted) return false
+            val lastNum = m.currentInningsNumber
+            if (lastNum < 2 || lastNum % 2 != 0) return false
+            val firstOfPair = allInnings.firstOrNull { it.inningsNumber == lastNum - 1 } ?: return false
+            val secondOfPair = allInnings.firstOrNull { it.inningsNumber == lastNum } ?: return false
+            return firstOfPair.totalRuns == secondOfPair.totalRuns
         }
 }
 
@@ -983,11 +1021,15 @@ class ScoringViewModel(
                 nextBatsmanNumber = nextBatsmanNum
             )
 
-            val oversUp = updatedInnings.completedOvers >= match.totalOvers
+            // req #3: a Super Over innings always ends after 1 over or 2 wickets, regardless
+            // of the match's normal totalOvers/playersPerTeam.
+            val inningsOversLimit = if (innings.isSuperOver) 1 else match.totalOvers
+            val inningsWicketsLimit = if (innings.isSuperOver) 2 else (match.playersPerTeam - 1)
+            val oversUp = updatedInnings.completedOvers >= inningsOversLimit
             // "All out" is based on the match's actual player count, not a hardcoded 11 —
             // local games rarely field a full side. A manual "Complete Innings" button is
             // also available in case a side has even fewer players available on the day.
-            val allOut = updatedInnings.wickets >= (match.playersPerTeam - 1)
+            val allOut = updatedInnings.wickets >= inningsWicketsLimit
             val targetChased = updatedInnings.target?.let { updatedInnings.totalRuns >= it } ?: false
             val inningsOver = oversUp || allOut || targetChased
 
@@ -1009,61 +1051,159 @@ class ScoringViewModel(
      * (overs up / all out / target chased) and when the user manually completes it.
      */
     private suspend fun finishInnings(match: MatchEntity, completedInnings: InningsEntity) {
-        if (completedInnings.inningsNumber == 1) {
-            // Create 2nd innings and let the observer pick it up
-            val secondInnings = InningsEntity(
+        val num = completedInnings.inningsNumber
+        if (num % 2 == 1) {
+            // First innings of a pair — innings 1 for a normal match, or (req #3) innings 3,
+            // 5, ... for a Super Over pair started via [startSuperOver]. Create its second
+            // innings and let the observer pick it up; this generalizes what used to be
+            // hardcoded as "innings 1 -> create innings 2" so a Super Over pair is handled by
+            // exactly the same, already-battle-tested path.
+            val nextInningsNumber = num + 1
+            val nextInnings = InningsEntity(
                 matchId = matchId,
-                inningsNumber = 2,
+                inningsNumber = nextInningsNumber,
                 battingTeam = completedInnings.bowlingTeam,
                 bowlingTeam = completedInnings.battingTeam,
                 battingSquadId = completedInnings.bowlingSquadId,
                 bowlingSquadId = completedInnings.battingSquadId,
-                target = completedInnings.totalRuns + 1
+                target = completedInnings.totalRuns + 1,
+                isSuperOver = completedInnings.isSuperOver
             )
-            val updatedMatch = match.copy(currentInningsNumber = 2)
+            val updatedMatch = match.copy(currentInningsNumber = nextInningsNumber)
 
-            // Atomic: 1st-innings-complete + 2nd-innings-create + match-advance, all in one
+            // Atomic: this-innings-complete + next-innings-create + match-advance, all in one
             // DB transaction (see CricketDao.finishInningsAtomic). This closes the exact race
             // the old split-into-3-writes version hit: observers could previously see "2nd
             // innings exists but match still says innings 1" (or the reverse) for a moment,
             // which is what made the opener dialog and squad pickers briefly latch onto stale
             // data right at the innings break.
-            val secondInningsId = repository.finishInningsAtomic(completedInnings, secondInnings, updatedMatch)
+            val nextInningsId = repository.finishInningsAtomic(completedInnings, nextInnings, updatedMatch)
                 ?: return
-            val secondInningsFromDb = secondInnings.copy(inningsId = secondInningsId)
+            val nextInningsFromDb = nextInnings.copy(inningsId = nextInningsId)
 
-            // Update state with properly-ID'd 2nd innings
-            val allInnings = listOf(completedInnings, secondInningsFromDb)
+            // Update state with properly-ID'd next innings, keeping whatever earlier innings
+            // (e.g. the original 1st/2nd innings, if this is a Super Over pair) were already
+            // in state instead of dropping them.
+            val updatedAllInnings = _uiState.value.allInnings
+                .filter { it.inningsId != completedInnings.inningsId }
+                .plus(completedInnings)
+                .plus(nextInningsFromDb)
             _uiState.value = _uiState.value.copy(
                 match = updatedMatch,
-                allInnings = allInnings,
-                selectedTabIndex = 1,
-                hasAutoSwitchedToSecondInnings = true,
-                openingPlayersPromptForInnings = secondInningsFromDb.inningsNumber
+                allInnings = updatedAllInnings,
+                // The 1st/2nd innings tab toggle only means anything for the two normal
+                // innings — a Super Over pair is shown via currentInnings' own "always show
+                // the live one once we're at innings 3+" rule regardless of this index.
+                selectedTabIndex = if (nextInningsNumber == 2) 1 else _uiState.value.selectedTabIndex,
+                hasAutoSwitchedToSecondInnings = _uiState.value.hasAutoSwitchedToSecondInnings || nextInningsNumber == 2,
+                openingPlayersPromptForInnings = nextInningsFromDb.inningsNumber
             )
 
-            // Explicitly resync the batter/bowler squad pickers for the 2nd innings right now
+            // Explicitly resync the batter/bowler squad pickers for the next innings right now
             // using the squad IDs we already know are correct (battingSquadId/bowlingSquadId
-            // are swapped for innings 2), rather than waiting for the next Flow emission to do
-            // it — now that the write above is one atomic transaction there's no in-between
-            // state left for that emission to race against, but setting it directly here still
-            // saves a redundant round trip.
-            _lastObservedInningsNumber = secondInningsFromDb.inningsNumber
+            // are swapped for the innings that just started), rather than waiting for the next
+            // Flow emission to do it — now that the write above is one atomic transaction
+            // there's no in-between state left for that emission to race against, but setting
+            // it directly here still saves a redundant round trip.
+            _lastObservedInningsNumber = nextInningsFromDb.inningsNumber
             observedBattingSquadId = null
             observedBowlingSquadId = null
-            observeSquadPlayers(secondInningsFromDb.battingSquadId, isBattingSquad = true)
-            observeSquadPlayers(secondInningsFromDb.bowlingSquadId, isBattingSquad = false)
+            observeSquadPlayers(nextInningsFromDb.battingSquadId, isBattingSquad = true)
+            observeSquadPlayers(nextInningsFromDb.bowlingSquadId, isBattingSquad = false)
         } else {
+            // Second/deciding innings of a pair completing — the normal 2nd innings, or (req
+            // #3) a Super Over's own 2nd innings.
             val allInn = repository.getInningsForMatch(matchId)
-            val firstInn = allInn.first { it.inningsNumber == 1 }
-            val resultText = buildResultText(firstInn, completedInnings)
-            // Atomic: 2nd-innings-complete + match-complete, one write.
+            val firstOfPair = allInn.first { it.inningsNumber == num - 1 }
+            val resultText = if (completedInnings.isSuperOver) {
+                buildSuperOverResultText(firstOfPair, completedInnings)
+            } else {
+                buildResultText(firstOfPair, completedInnings)
+            }
+            // Atomic: this-innings-complete + match-complete, one write.
             repository.finishInningsAtomic(
                 completedInnings,
                 null,
-                match.copy(isCompleted = true, resultSummary = resultText)
+                match.copy(
+                    isCompleted = true,
+                    resultSummary = resultText,
+                    wasSuperOver = match.wasSuperOver || completedInnings.isSuperOver
+                )
             )
             // Let the match observer update matchCompleteMessage automatically
+        }
+    }
+
+    /**
+     * req #3: "start a super over inside the same match ... keep a track of it ... update who
+     * won the match and all the related details" — offered once the match has ended tied (see
+     * [ScoringUiState.canStartSuperOver]). Creates a fresh pair of innings numbered right after
+     * whatever came before (3/4, or 5/6 if a Super Over itself ties again), reopens the match
+     * onto the first of them, and lets the existing ball-by-ball scoring engine take it from
+     * there exactly like a normal innings — see the isSuperOver-aware overs/wickets caps in
+     * [applyDelivery] and the isSuperOver branch in [finishInnings]/[buildSuperOverResultText]
+     * for what's actually different about scoring one.
+     *
+     * Batting order: kept the same as the match's own 1st/2nd innings (whoever batted first in
+     * the match bats first in the Super Over too) rather than modeling a fresh mini-toss — a
+     * deliberate simplification.
+     */
+    fun startSuperOver() {
+        viewModelScope.launch {
+            val match = repository.getMatch(matchId) ?: return@launch
+            if (!match.isCompleted) return@launch
+            val allInn = repository.getInningsForMatch(matchId)
+            val lastNum = match.currentInningsNumber
+            if (lastNum < 2 || lastNum % 2 != 0) return@launch
+            val firstOfPair = allInn.firstOrNull { it.inningsNumber == lastNum - 1 } ?: return@launch
+            val secondOfPair = allInn.firstOrNull { it.inningsNumber == lastNum } ?: return@launch
+            if (firstOfPair.totalRuns != secondOfPair.totalRuns) return@launch // not actually tied
+
+            val newInningsNumber = lastNum + 1
+            val superOverInnings = InningsEntity(
+                matchId = matchId,
+                inningsNumber = newInningsNumber,
+                battingTeam = firstOfPair.battingTeam,
+                bowlingTeam = firstOfPair.bowlingTeam,
+                battingSquadId = firstOfPair.battingSquadId,
+                bowlingSquadId = firstOfPair.bowlingSquadId,
+                isSuperOver = true
+            )
+            val updatedMatch = match.copy(
+                isCompleted = false,
+                resultSummary = null,
+                currentInningsNumber = newInningsNumber,
+                wasSuperOver = true
+            )
+
+            val newInningsId = repository.startSuperOver(superOverInnings, updatedMatch)
+            val created = superOverInnings.copy(inningsId = newInningsId)
+
+            _uiState.value = _uiState.value.copy(
+                match = updatedMatch,
+                allInnings = _uiState.value.allInnings + created,
+                matchCompleteMessage = null,
+                openingPlayersPromptForInnings = created.inningsNumber
+            )
+            _lastObservedInningsNumber = created.inningsNumber
+            observedBattingSquadId = null
+            observedBowlingSquadId = null
+            observeSquadPlayers(created.battingSquadId, isBattingSquad = true)
+            observeSquadPlayers(created.bowlingSquadId, isBattingSquad = false)
+        }
+    }
+
+    private fun buildSuperOverResultText(firstInnings: InningsEntity, secondInnings: InningsEntity): String {
+        return when {
+            secondInnings.totalRuns > firstInnings.totalRuns -> {
+                val wicketsInHand = (2 - secondInnings.wickets).coerceAtLeast(0)
+                "${secondInnings.battingTeam} won the Super Over by $wicketsInHand wicket(s) (Match Tied)"
+            }
+            secondInnings.totalRuns < firstInnings.totalRuns -> {
+                val margin = firstInnings.totalRuns - secondInnings.totalRuns
+                "${firstInnings.battingTeam} won the Super Over by $margin run(s) (Match Tied)"
+            }
+            else -> "Scores level after the Super Over as well — still tied"
         }
     }
 
