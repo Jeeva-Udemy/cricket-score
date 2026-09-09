@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.cricketscorer.backup.BackupRevision
 import com.example.cricketscorer.data.BackupDataScope
 import com.example.cricketscorer.viewmodel.BackupUiState
 import com.example.cricketscorer.viewmodel.HomeViewModel
@@ -193,6 +194,8 @@ fun HomeScreen(
                 if (intent != null) signInLauncher.launch(intent)
             },
             onDisconnect = { viewModel.signOutOfDrive() },
+            onRecoverEarlier = { viewModel.requestListRevisions() },
+            onRestoreRevision = { viewModel.restoreFromRevision(it) },
             onDismiss = {
                 showBackupDialog = false
                 viewModel.dismissBackupStatus()
@@ -265,12 +268,16 @@ private fun BackupResyncDialog(
     onResyncNow: () -> Unit,
     onDeleteBackup: () -> Unit,
     onDisconnect: () -> Unit,
+    onRecoverEarlier: () -> Unit,
+    onRestoreRevision: (BackupRevision) -> Unit,
     onDismiss: () -> Unit
 ) {
     val inProgress = backupState is BackupUiState.SigningIn ||
         backupState is BackupUiState.BackingUp ||
         backupState is BackupUiState.Resyncing ||
-        backupState is BackupUiState.DeletingBackup
+        backupState is BackupUiState.DeletingBackup ||
+        backupState is BackupUiState.ListingRevisions ||
+        backupState is BackupUiState.RestoringRevision
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -316,6 +323,8 @@ private fun BackupResyncDialog(
                                 is BackupUiState.BackingUp -> "Backing up…"
                                 is BackupUiState.Resyncing -> "Resyncing from Drive…"
                                 is BackupUiState.DeletingBackup -> "Deleting backup…"
+                                is BackupUiState.ListingRevisions -> "Looking for earlier backups…"
+                                is BackupUiState.RestoringRevision -> "Restoring earlier backup…"
                                 else -> ""
                             },
                             style = MaterialTheme.typography.bodySmall
@@ -370,12 +379,27 @@ private fun BackupResyncDialog(
                     TextButton(onClick = onDisconnect, enabled = !inProgress, modifier = Modifier.fillMaxWidth()) {
                         Text("Disconnect Account")
                     }
+                    // Recovery path for an accidental overwrite (e.g. tapping Backup instead
+                    // of Resync) — lists earlier versions of the Drive backup file so one can
+                    // be restored. Kept low-key (a plain text link) since it's a rescue tool,
+                    // not part of the everyday flow.
+                    TextButton(onClick = onRecoverEarlier, enabled = !inProgress, modifier = Modifier.fillMaxWidth()) {
+                        Text("Recover an Earlier Backup…")
+                    }
                 }
             }
         },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
+
+    (backupState as? BackupUiState.RevisionsAvailable)?.let { state ->
+        RevisionPickerDialog(
+            revisions = state.revisions,
+            onRestore = onRestoreRevision,
+            onDismiss = onDismiss
+        )
+    }
 
     if (showDeleteConfirm) {
         AlertDialog(
@@ -400,6 +424,86 @@ private fun BackupResyncDialog(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+/**
+ * Lists prior Drive revisions of the backup file (newest first) so the user can pick one to
+ * restore — the rescue path for an accidental overwrite (e.g. tapping Backup instead of
+ * Resync, which used to be able to silently replace a good backup with an empty one). Picking
+ * a revision asks for confirmation first since restoring replaces all local match/squad data.
+ */
+@Composable
+private fun RevisionPickerDialog(
+    revisions: List<BackupRevision>,
+    onRestore: (BackupRevision) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pendingRevision by remember { mutableStateOf<BackupRevision?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Recover an Earlier Backup") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "These are earlier saved versions of your Google Drive backup. Pick one to " +
+                        "restore it to this device.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(4.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    revisions.forEach { revision ->
+                        Card(onClick = { pendingRevision = revision }, modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    formatRelativeTime(revision.modifiedTimeMillis),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                revision.sizeBytes?.let {
+                                    Text(
+                                        "${it / 1024} KB",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+
+    pendingRevision?.let { revision ->
+        AlertDialog(
+            onDismissRequest = { pendingRevision = null },
+            title = { Text("Restore This Backup?") },
+            text = {
+                Text(
+                    "This replaces all matches and squads on this device with the backup from " +
+                        "${formatRelativeTime(revision.modifiedTimeMillis)}. This can't be undone."
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    onRestore(revision)
+                    pendingRevision = null
+                }) { Text("Restore") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRevision = null }) { Text("Cancel") }
             }
         )
     }

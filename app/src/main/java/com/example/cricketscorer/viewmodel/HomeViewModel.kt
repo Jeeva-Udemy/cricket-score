@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cricketscorer.backup.BackupRevision
 import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.backup.DriveBackupManager
 import com.example.cricketscorer.data.BackupDataScope
@@ -35,6 +36,11 @@ sealed class BackupUiState {
     object DeletingBackup : BackupUiState()
     data class Success(val message: String) : BackupUiState()
     data class Error(val message: String) : BackupUiState()
+    /** Recovery flow: fetching/showing prior Drive revisions of the backup file, so an
+     *  accidental overwrite (see [HomeViewModel.backupNow]'s safety guard) can be undone. */
+    object ListingRevisions : BackupUiState()
+    data class RevisionsAvailable(val revisions: List<BackupRevision>) : BackupUiState()
+    object RestoringRevision : BackupUiState()
 }
 
 /**
@@ -313,6 +319,20 @@ class HomeViewModel(
                 scope == BackupDataScope.MATCH -> existing.copy(matches = fresh.matches, innings = fresh.innings, ballEvents = fresh.ballEvents)
                 else -> fresh
             }
+            // Safety guard: this is exactly the bug that let tapping "Back Up Now" right after
+            // a fresh reinstall (no local data yet) silently overwrite a real, non-empty Drive
+            // backup with an empty one — no warning, no confirmation, no way back short of
+            // Drive's own revision history. If what we're about to upload is empty while a real
+            // backup already exists remotely, refuse instead — the user almost certainly meant
+            // Resync, not Backup.
+            if (existing != null && isEffectivelyEmpty(merged) && !isEffectivelyEmpty(existing)) {
+                _backupState.value = BackupUiState.Error(
+                    "This device has no data to back up yet, but Google Drive already has a " +
+                        "backup — refusing to overwrite it. Tap Resync instead to bring that " +
+                        "data onto this device."
+                )
+                return@launch
+            }
             driveBackupManager.uploadBackup(account, BackupSerializer.toJson(merged))
                 .onSuccess {
                     val now = System.currentTimeMillis()
@@ -334,6 +354,9 @@ class HomeViewModel(
                 }
         }
     }
+
+    private fun isEffectivelyEmpty(snapshot: BackupSnapshot): Boolean =
+        snapshot.matches.isEmpty() && snapshot.squads.isEmpty()
 
     private fun describeBackupSuccess(scope: BackupDataScope, snapshot: BackupSnapshot): String = when (scope) {
         BackupDataScope.SQUAD -> "Backed up ${snapshot.squads.size} squad(s) to Google Drive."
@@ -408,5 +431,54 @@ class HomeViewModel(
 
     fun dismissBackupStatus() {
         _backupState.value = BackupUiState.Idle
+    }
+
+    // ---------- Recover an earlier backup (Drive revision history) ----------
+    // See DriveBackupManager.listBackupRevisions: every upload updates the same Drive file in
+    // place, and Drive retains prior revisions of it rather than discarding them — this is the
+    // recovery path for an accidental overwrite (e.g. tapping Backup instead of Resync).
+
+    /** Fetches the list of prior Drive revisions of the backup file, newest first. */
+    fun requestListRevisions() {
+        val account = driveBackupManager.getLastSignedInAccount() ?: return
+        _backupState.value = BackupUiState.ListingRevisions
+        viewModelScope.launch {
+            driveBackupManager.listBackupRevisions(account)
+                .onSuccess { revisions ->
+                    _backupState.value = if (revisions.isEmpty()) {
+                        BackupUiState.Error("No earlier backup versions were found on Google Drive.")
+                    } else {
+                        BackupUiState.RevisionsAvailable(revisions)
+                    }
+                }
+                .onFailure {
+                    _backupState.value = BackupUiState.Error(
+                        it.message ?: "Couldn't list earlier backup versions. Check your connection and try again."
+                    )
+                }
+        }
+    }
+
+    /** Restores local data from one specific past Drive revision. Always a full BOTH restore —
+     *  this is recovering a whole point-in-time snapshot, not doing a scoped resync. */
+    fun restoreFromRevision(revision: BackupRevision) {
+        val account = driveBackupManager.getLastSignedInAccount() ?: return
+        _backupState.value = BackupUiState.RestoringRevision
+        viewModelScope.launch {
+            driveBackupManager.downloadRevision(account, revision.id)
+                .mapCatching { BackupSerializer.fromJson(it) }
+                .onSuccess { snapshot ->
+                    repository.restoreFromBackup(snapshot, BackupDataScope.BOTH)
+                    _backupState.value = BackupUiState.Success(
+                        "Restored ${snapshot.matches.size} match(es) and ${snapshot.squads.size} " +
+                            "squad(s) from an earlier backup."
+                    )
+                }
+                .onFailure {
+                    _backupState.value = BackupUiState.Error(
+                        it.message ?: "Couldn't restore that version. Check your connection and try again."
+                    )
+                }
+        }
     }
 }

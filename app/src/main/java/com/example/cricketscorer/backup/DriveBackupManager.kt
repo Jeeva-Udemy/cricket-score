@@ -124,4 +124,54 @@ class DriveBackupManager(private val appContext: Context) {
                 Result.failure(t)
             }
         }
+
+    /**
+     * Recovery path for an accidental overwrite (e.g. tapping "Back Up Now" right after a
+     * fresh reinstall, before any local data existed, which used to silently replace a good
+     * remote backup with an empty one — see HomeViewModel.backupNow's safety guard). Every
+     * [uploadBackup] call updates the SAME Drive file in place via `drive.files().update()`,
+     * and Drive keeps prior revisions of a file updated this way rather than discarding them,
+     * so the pre-overwrite backup is very likely still recoverable from revision history —
+     * but Drive's retention isn't indefinite, so this should be used promptly.
+     *
+     * Returns revisions newest-first, or an empty list if there's no backup file at all yet.
+     */
+    suspend fun listBackupRevisions(account: GoogleSignInAccount): Result<List<BackupRevision>> =
+        withContext(Dispatchers.IO) {
+            try {
+                val drive = buildDriveService(account)
+                val fileId = findBackupFileId(drive) ?: return@withContext Result.success(emptyList())
+                val result = drive.revisions().list(fileId)
+                    .setFields("revisions(id, modifiedTime, size)")
+                    .execute()
+                val revisions = (result.revisions ?: emptyList())
+                    .map { BackupRevision(it.id, it.modifiedTime?.value ?: 0L, it.size) }
+                    .sortedByDescending { it.modifiedTimeMillis }
+                Result.success(revisions)
+            } catch (t: Throwable) {
+                Result.failure(t)
+            }
+        }
+
+    /** Downloads one specific past revision's JSON content — see [listBackupRevisions]. */
+    suspend fun downloadRevision(account: GoogleSignInAccount, revisionId: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val drive = buildDriveService(account)
+                val fileId = findBackupFileId(drive)
+                    ?: return@withContext Result.failure(IllegalStateException("No backup file found on Drive."))
+                val output = ByteArrayOutputStream()
+                drive.revisions().get(fileId, revisionId).executeMediaAndDownloadTo(output)
+                Result.success(output.toString(Charsets.UTF_8.name()))
+            } catch (t: Throwable) {
+                Result.failure(t)
+            }
+        }
 }
+
+/** One past revision of the Drive backup file — see [DriveBackupManager.listBackupRevisions]. */
+data class BackupRevision(
+    val id: String,
+    val modifiedTimeMillis: Long,
+    val sizeBytes: Long?
+)
