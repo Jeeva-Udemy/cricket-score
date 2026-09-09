@@ -1,9 +1,10 @@
 package com.example.cricketscorer.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Divider
@@ -94,15 +95,16 @@ internal fun DropdownItemDivider() {
 
 /**
  * A dropdown to quick-pick a known player name, PLUS a separate, always-editable text field
- * to type one in by hand — deliberately mirroring the Select Squad dropdown + Team Name text
- * field pair used above on the Match Setup screen (two distinct fields, not one merged
- * autocomplete box), since a single combo field that both showed suggestions and accepted
- * typing read as "I can only pick from a list, I can't type a name" (req: "we need both
- * dropdown and field to enter batsman/bowler name just like we do it for squad").
+ * to type one in by hand — laid out side by side, exactly like the Select Squad dropdown +
+ * Team Name text field pair on the Match Setup screen (req: "Keep the batsman/bowler dropdown
+ * and manual entry field side by side just like we did it for Squad selection in Start
+ * Match" — this had been stacked in a Column instead of a Row, the one visible difference from
+ * that pattern).
  *
  * The dropdown only appears when there's actually something to offer — a squad linked to
  * this match, or a name typed here before elsewhere in the app (see RecentPlayersStore) — an
- * empty [availablePlayerNames] just shows the plain text field.
+ * empty [availablePlayerNames] just shows the plain text field at full width, same as the
+ * Squad row would if there were no squads to list.
  *
  * req #2: whatever is typed by hand always starts with a capital letter.
  * req #4: picking a name from the dropdown automatically moves focus to
@@ -141,12 +143,19 @@ fun PlayerPickerField(
         onDone = { keyboardController?.hide() }
     )
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (availablePlayerNames.isNotEmpty()) {
+    // req: side by side, matching the Squad row's Row(spacedBy(12.dp)) { ...weight(1f)...
+    // weight(1f) } exactly — only fall back to a single full-width field when there's no
+    // dropdown to put next to it (nothing to list in availablePlayerNames).
+    if (availablePlayerNames.isNotEmpty()) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = modifier.fillMaxWidth()
+        ) {
             var expanded by remember { mutableStateOf(false) }
             ExposedDropdownMenuBox(
                 expanded = expanded,
-                onExpandedChange = { expanded = it }
+                onExpandedChange = { expanded = it },
+                modifier = Modifier.weight(1f)
             ) {
                 OutlinedTextField(
                     value = value.ifBlank { "Select $label" },
@@ -178,10 +187,22 @@ fun PlayerPickerField(
                     }
                 }
             }
-        }
 
-        // The manual entry field — always present and always editable, regardless of
-        // whether a dropdown is shown above it, so a name can always be typed by hand.
+            // The manual entry field — always present and always editable, regardless of
+            // whether a dropdown sits next to it, so a name can always be typed by hand.
+            OutlinedTextField(
+                value = value,
+                onValueChange = { changeAndCapitalize(it) },
+                label = { Text(label) },
+                singleLine = true,
+                keyboardOptions = keyboardOptions,
+                keyboardActions = keyboardActions,
+                modifier = Modifier
+                    .weight(1f)
+                    .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
+            )
+        }
+    } else {
         OutlinedTextField(
             value = value,
             onValueChange = { changeAndCapitalize(it) },
@@ -189,7 +210,7 @@ fun PlayerPickerField(
             singleLine = true,
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
         )
