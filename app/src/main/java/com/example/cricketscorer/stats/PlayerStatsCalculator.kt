@@ -122,6 +122,15 @@ object PlayerStatsCalculator {
         var bestFigures: BowlingFigures? = null
     }
 
+    /** Bug fix: "why is there 2 different entries for [the same player] ... instead of 1" —
+     *  a name typed with a stray leading/trailing space (invisible once rendered in a list row)
+     *  used to be a different grouping key from the same name typed cleanly elsewhere, splitting
+     *  one player's career stats into two separate Rankings/Player Stats rows. Every name read
+     *  from ball events/innings in this file is normalized through here before it's used as a
+     *  key or compared against another name, so the same player always collapses into one row
+     *  regardless of stray whitespace in how their name happened to be entered match to match. */
+    private fun norm(name: String): String = name.trim()
+
     /**
      * Aggregates every player who batted or bowled across [matches]. Scope is entirely the
      * caller's choice — pass every match ever played for career stats/Rankings, or just one
@@ -157,12 +166,12 @@ object PlayerStatsCalculator {
             // non-striker (ball-by-ball snapshots catch anyone who came in but never faced a
             // ball too, e.g. a non-striker run out backing up). ----
             val battersInInnings = linkedSetOf<String>()
-            balls.forEach { b -> if (b.strikerName.isNotBlank()) battersInInnings.add(b.strikerName) }
-            if (inn.strikerName.isNotBlank()) battersInInnings.add(inn.strikerName)
-            if (inn.nonStrikerName.isNotBlank()) battersInInnings.add(inn.nonStrikerName)
+            balls.forEach { b -> if (b.strikerName.isNotBlank()) battersInInnings.add(norm(b.strikerName)) }
+            if (inn.strikerName.isNotBlank()) battersInInnings.add(norm(inn.strikerName))
+            if (inn.nonStrikerName.isNotBlank()) battersInInnings.add(norm(inn.nonStrikerName))
 
             for (batter in battersInInnings) {
-                val theirBalls = balls.filter { it.strikerName == batter }
+                val theirBalls = balls.filter { norm(it.strikerName) == batter }
                 var runs = 0
                 var ballsFaced = 0
                 var fours = 0
@@ -175,7 +184,7 @@ object PlayerStatsCalculator {
                         if (b.runsScored == 6) sixes++
                     }
                 }
-                val isOut = balls.any { it.isWicket && it.dismissedPlayerName == batter }
+                val isOut = balls.any { it.isWicket && norm(it.dismissedPlayerName) == batter }
                 // Skip a batter who's only ever been the *waiting* non-striker so far in a
                 // still-live innings — don't record a premature "not out, 0(0)" for someone who
                 // simply hasn't come in yet. Once the innings/match is over, everyone who was
@@ -199,9 +208,9 @@ object PlayerStatsCalculator {
             }
 
             // ---- Bowling: every bowler who's sent down at least one ball in this innings ----
-            val bowlersInInnings = balls.mapNotNull { it.bowlerName.takeIf { n -> n.isNotBlank() } }.toSet()
+            val bowlersInInnings = balls.mapNotNull { norm(it.bowlerName).takeIf { n -> n.isNotBlank() } }.toSet()
             for (bowler in bowlersInInnings) {
-                val theirBalls = balls.filter { it.bowlerName == bowler }
+                val theirBalls = balls.filter { norm(it.bowlerName) == bowler }
                 if (theirBalls.isEmpty()) continue
 
                 var ballsBowled = 0

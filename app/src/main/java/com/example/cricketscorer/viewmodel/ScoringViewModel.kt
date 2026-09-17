@@ -185,8 +185,11 @@ data class ScoringUiState(
             set.addAll(bowlingSquadPlayerNames)
             // req #1: "the dropdown just like we have for Squad" even when this match has no
             // saved squad linked — fall back to every name ever typed anywhere in the app so a
-            // name only has to be typed once, ever.
-            set.addAll(recentPlayerNames)
+            // name only has to be typed once, ever. Only when there's genuinely no squad linked
+            // to the bowling side, though — otherwise every name ever typed across every match/
+            // squad in the whole app leaked into a squad-linked match's own bowler picker (bug:
+            // picking Squad 3 + Squad 4 for a match still offered Squad 1/2's players too).
+            if (inn?.bowlingSquadId == null) set.addAll(recentPlayerNames)
             // req #2: "the same bowler can't bowl the continuous overs" — once their over has
             // completed and the new over hasn't started yet (no ball bowled), they must not be
             // offered again for the very next over. While their own over is still IN progress,
@@ -215,7 +218,11 @@ data class ScoringUiState(
             val onCrease = setOfNotNull(inn?.strikerName, inn?.nonStrikerName)
             // req #1: same "no saved squad" fallback as existingBowlers above — remembered
             // names are still excluded if they're already batting or already out this innings.
-            val pool = battingSquadPlayerNames.toSet() + recentPlayerNames
+            // Bug fix: only fall back to the app-wide recent-names set when the batting side
+            // has no squad actually linked — a linked squad's own roster shouldn't be diluted
+            // with players from every other squad/match ever scored on this device.
+            val pool = battingSquadPlayerNames.toSet() +
+                (if (inn?.battingSquadId == null) recentPlayerNames else emptySet())
             return pool.filter { it !in onCrease && it !in outBatsmanNames }
         }
 
