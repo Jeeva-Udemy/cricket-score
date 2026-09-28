@@ -1,5 +1,7 @@
 package com.example.cricketscorer
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -7,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -16,6 +20,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.cricketscorer.ui.ComingSoonScreen
 import com.example.cricketscorer.ui.HomeScreen
+import com.example.cricketscorer.ui.MatchDashboardScreen
 import com.example.cricketscorer.ui.MatchHistoryScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
 import com.example.cricketscorer.ui.PlayerStatsScreen
@@ -25,6 +30,7 @@ import com.example.cricketscorer.ui.RoomsScreen
 import com.example.cricketscorer.ui.ScoringScreen
 import com.example.cricketscorer.ui.SquadScreen
 import com.example.cricketscorer.viewmodel.HomeViewModel
+import com.example.cricketscorer.viewmodel.MatchDashboardViewModel
 import com.example.cricketscorer.viewmodel.MatchSetupViewModel
 import com.example.cricketscorer.viewmodel.PlayerStatsViewModel
 import com.example.cricketscorer.viewmodel.RoomsViewModel
@@ -33,8 +39,13 @@ import com.example.cricketscorer.viewmodel.SquadViewModel
 import com.example.cricketscorer.viewmodel.ViewModelFactory
 
 class MainActivity : ComponentActivity() {
+
+    /** Share Data: a Wickt data file opened from WhatsApp etc. (VIEW / SEND intent). */
+    private val pendingImportUri = mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) handleIncomingIntent(intent)
 
         val app = application as CricketApplication
         val factory = ViewModelFactory(app.repository, applicationContext)
@@ -42,16 +53,48 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    CricketNavHost(factory)
+                    CricketNavHost(
+                        factory = factory,
+                        pendingImportUri = pendingImportUri.value,
+                        onImportConsumed = { pendingImportUri.value = null }
+                    )
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        val uri: Uri? = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<android.os.Parcelable>(Intent.EXTRA_STREAM) as? Uri
+            }
+            else -> null
+        }
+        if (uri != null) pendingImportUri.value = uri
+    }
 }
 
 @Composable
-fun CricketNavHost(factory: ViewModelFactory) {
+fun CricketNavHost(
+    factory: ViewModelFactory,
+    pendingImportUri: Uri? = null,
+    onImportConsumed: () -> Unit = {}
+) {
     val navController = rememberNavController()
+
+    // A shared data file was opened from outside the app — show the import prompt on Home.
+    LaunchedEffect(pendingImportUri) {
+        if (pendingImportUri != null && navController.currentDestination?.route != "home") {
+            navController.navigate("home") { popUpTo("home") { inclusive = true } }
+        }
+    }
 
     NavHost(navController = navController, startDestination = "home") {
 
@@ -66,7 +109,9 @@ fun CricketNavHost(factory: ViewModelFactory) {
                 onRankings = { navController.navigate("rankings") },
                 onTournaments = { navController.navigate("tournaments") },
                 onMatchHistory = { navController.navigate("matchHistory") },
-                onOpenRooms = { navController.navigate("rooms") }
+                onOpenRooms = { navController.navigate("rooms") },
+                externalImportUri = pendingImportUri,
+                onExternalImportConsumed = onImportConsumed
             )
         }
 
@@ -102,7 +147,21 @@ fun CricketNavHost(factory: ViewModelFactory) {
             MatchHistoryScreen(
                 viewModel = homeViewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") }
+                onOpenMatch = { matchId -> navController.navigate("scoring/$matchId/0") },
+                onOpenDashboard = { matchId -> navController.navigate("dashboard/$matchId") }
+            )
+        }
+
+        composable(
+            route = "dashboard/{matchId}",
+            arguments = listOf(navArgument("matchId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val matchId = backStackEntry.arguments?.getLong("matchId") ?: -1L
+            val dashboardViewModel: MatchDashboardViewModel = viewModel(factory = factory)
+            MatchDashboardScreen(
+                viewModel = dashboardViewModel,
+                matchId = matchId,
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 
@@ -182,7 +241,8 @@ fun CricketNavHost(factory: ViewModelFactory) {
                     navController.navigate("home") {
                         popUpTo("home") { inclusive = true }
                     }
-                }
+                },
+                onOpenDashboard = { id -> navController.navigate("dashboard/$id") }
             )
         }
     }

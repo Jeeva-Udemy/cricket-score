@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
@@ -42,6 +44,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import com.example.cricketscorer.backup.ShareUtils
+import com.example.cricketscorer.data.BackupDataScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,9 +75,13 @@ import java.util.TimeZone
 fun MatchHistoryScreen(
     viewModel: HomeViewModel,
     onNavigateBack: () -> Unit,
-    onOpenMatch: (matchId: Long) -> Unit
+    onOpenMatch: (matchId: Long) -> Unit,
+    onOpenDashboard: (matchId: Long) -> Unit = {}
 ) {
     val allMatches by viewModel.matches.collectAsState()
+    val shareState by viewModel.shareState.collectAsState()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val selectedMatchIds by viewModel.selectedMatchIds.collectAsState()
     val isSelectionMode = selectedMatchIds.isNotEmpty()
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -99,6 +110,24 @@ fun MatchHistoryScreen(
                 actions = {
                     IconButton(onClick = { viewModel.selectAll() }) {
                         Icon(imageVector = Icons.Default.SelectAll, contentDescription = "Select All")
+                    }
+                    // Share Data: send just the selected matches (with their teams) to a teammate.
+                    IconButton(onClick = {
+                        val ids = selectedMatchIds.toList()
+                        coroutineScope.launch {
+                            val file = viewModel.buildShareFile(BackupDataScope.BOTH, ids) ?: return@launch
+                            ShareUtils.shareFile(
+                                context = context,
+                                uri = file.first,
+                                mimeType = "application/json",
+                                message = file.second,
+                                chooserTitle = "Share selected matches",
+                                preferWhatsApp = false
+                            )
+                            viewModel.clearSelection()
+                        }
+                    }) {
+                        Icon(imageVector = Icons.Default.Share, contentDescription = "Share selected matches")
                     }
                     IconButton(onClick = { showDeleteConfirmDialog = true }) {
                         Icon(
@@ -188,6 +217,7 @@ fun MatchHistoryScreen(
                         isSelected = isSelected,
                         isSelectionMode = isSelectionMode,
                         onFetchPlayerOfTheMatch = { viewModel.playerOfTheMatch(match) },
+                        onOpenDashboard = { onOpenDashboard(match.matchId) },
                         onClick = {
                             if (isSelectionMode) {
                                 viewModel.toggleMatchSelection(match.matchId)
@@ -233,6 +263,12 @@ fun MatchHistoryScreen(
         )
     }
 
+    ShareDataStatusDialogs(
+        state = shareState,
+        onConfirmImport = { viewModel.confirmImport(it) },
+        onDismiss = { viewModel.dismissShareState() }
+    )
+
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis)
         DatePickerDialog(
@@ -261,6 +297,7 @@ private fun MatchHistoryCard(
     isSelected: Boolean,
     isSelectionMode: Boolean,
     onFetchPlayerOfTheMatch: suspend () -> PlayerStatsCalculator.PlayerAward?,
+    onOpenDashboard: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onCheckedChange: (Boolean) -> Unit
@@ -372,6 +409,14 @@ private fun MatchHistoryCard(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
                     )
+                }
+
+                if (!isSelectionMode) {
+                    // Match Dashboard: whole-match summary image to share on WhatsApp.
+                    TextButton(onClick = onOpenDashboard, contentPadding = PaddingValues(0.dp)) {
+                        Icon(Icons.Default.Dashboard, contentDescription = null)
+                        Text("  Match summary / share")
+                    }
                 }
             }
         }

@@ -149,6 +149,31 @@ interface CricketDao {
     @Query("SELECT * FROM players")
     suspend fun getAllPlayers(): List<PlayerEntity>
 
+    // ---------- Player merges ("Merge players") ----------
+
+    @Insert
+    suspend fun insertPlayerMerge(merge: PlayerMergeEntity): Long
+
+    @Query("DELETE FROM player_merges WHERE mergeId IN (:mergeIds)")
+    suspend fun deletePlayerMerges(mergeIds: List<Long>)
+
+    @Query("SELECT * FROM player_merges ORDER BY createdAt ASC")
+    fun observeAllPlayerMerges(): Flow<List<PlayerMergeEntity>>
+
+    @Query("SELECT * FROM player_merges ORDER BY createdAt ASC")
+    suspend fun getAllPlayerMerges(): List<PlayerMergeEntity>
+
+    @Query("DELETE FROM player_merges")
+    suspend fun clearAllPlayerMerges()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restorePlayerMerge(merge: PlayerMergeEntity)
+
+    @Transaction
+    suspend fun insertPlayerMerges(merges: List<PlayerMergeEntity>) {
+        merges.forEach { insertPlayerMerge(it) }
+    }
+
     // ---------- Restore (Google Drive Resync) ----------
     // These re-insert rows with their ORIGINAL primary keys (REPLACE on conflict) so that
     // foreign keys between matches/innings/ball_events and squads/players stay intact when
@@ -244,6 +269,143 @@ interface CricketDao {
         val nextInningsId = nextInnings?.let { insertInnings(it) }
         updateMatch(updatedMatch)
         return nextInningsId
+    }
+
+    // ---------- Share Data: import a teammate's exported file ----------
+
+    /**
+     * Merges a shared data file (see backup/DataShareManager) INTO this device's data — never
+     * replaces or wipes anything that's already here, unlike Drive Resync.
+     *
+     * Every row gets a brand-new local id (the sender's ids would collide with this device's
+     * own rows), and every foreign key (innings -> match, ball -> innings, match/innings ->
+     * squad, player -> squad) is remapped to the new ids. Duplicates are skipped so the same
+     * file can safely be imported twice:
+     *  - squads are matched by team name (case-insensitive); only missing players are added
+     *  - a match is "the same match" when createdAt + both team names are identical; it is
+     *    replaced only if the incoming copy has progressed further (more balls / completed)
+     *  - identical player merges are not duplicated
+     *
+     * Runs as a single transaction, so a bad file can never leave a half-imported match.
+     */
+    @Transaction
+    suspend fun importSharedSnapshot(
+        snapshot: BackupSnapshot,
+        includeSquads: Boolean,
+        includeMatches: Boolean
+    ): ImportResult {
+        var squadsAdded = 0
+        var playersAdded = 0
+        var matchesAdded = 0
+        var matchesUpdated = 0
+        var matchesSkipped = 0
+        var mergesAdded = 0
+
+        fun norm(s: String) = s.trim().replace(Regex("\\s+"), " ").lowercase()
+
+        // ---- Squads (always resolved, so imported matches can link to the right squad) ----
+        val squadIdMap = mutableMapOf<Long, Long>()
+        val localSquads = getAllSquads().toMutableList()
+        for (squad in snapshot.squads) {
+            val existing = localSquads.firstOrNull { norm(it.teamName) == norm(squad.teamName) }
+            val localId = when {
+                existing != null -> existing.squadId
+                includeSquads -> {
+                    val newId = insertSquad(squad.copy(squadId = 0))
+                    localSquads += squad.copy(squadId = newId)
+                    squadsAdded++
+                    newId
+                }
+                else -> null
+            }
+            if (localId != null) squadIdMap[squad.squadId] = localId
+        }
+        if (includeSquads) {
+            val localPlayersBySquad = mutableMapOf<Long, MutableSet<String>>()
+            for (player in snapshot.players) {
+                val localSquadId = squadIdMap[player.squadId] ?: continue
+                val names = localPlayersBySquad.getOrPut(localSquadId) {
+                    getPlayersForSquad(localSquadId).map { norm(it.name) }.toMutableSet()
+                }
+                if (norm(player.name) in names) continue
+                insertPlayer(player.copy(playerId = 0, squadId = localSquadId))
+                names += norm(player.name)
+                playersAdded++
+            }
+        }
+
+        // ---- Matches (+ their innings and ball events) ----
+        if (includeMatches) {
+            val inningsByMatch = snapshot.innings.groupBy { it.matchId }
+            val ballsByInnings = snapshot.ballEvents.groupBy { it.inningsId }
+            val localMatches = getAllMatches()
+
+            for (match in snapshot.matches) {
+                val incomingInnings = inningsByMatch[match.matchId].orEmpty()
+                val incomingBallCount = incomingInnings.sumOf { ballsByInnings[it.inningsId].orEmpty().size }
+
+                val duplicate = localMatches.firstOrNull {
+                    it.createdAt == match.createdAt &&
+                        norm(it.teamAName) == norm(match.teamAName) &&
+                        norm(it.teamBName) == norm(match.teamBName)
+                }
+                if (duplicate != null) {
+                    val localBallCount = getInningsForMatch(duplicate.matchId)
+                        .sumOf { getBallEventsForInnings(it.inningsId).size }
+                    val incomingIsNewer = incomingBallCount > localBallCount ||
+                        (match.isCompleted && !duplicate.isCompleted)
+                    if (!incomingIsNewer) {
+                        matchesSkipped++
+                        continue
+                    }
+                    deleteBallEventsForMatches(listOf(duplicate.matchId))
+                    deleteInningsForMatches(listOf(duplicate.matchId))
+                    deleteMatches(listOf(duplicate.matchId))
+                    matchesUpdated++
+                } else {
+                    matchesAdded++
+                }
+
+                // shareCode is deliberately dropped: it's the sender's live Room/Cloud Sync
+                // code, and keeping it would make this device push this (old) match over
+                // whatever is currently live in that room.
+                val newMatchId = insertMatch(
+                    match.copy(
+                        matchId = 0,
+                        teamASquadId = match.teamASquadId?.let { squadIdMap[it] },
+                        teamBSquadId = match.teamBSquadId?.let { squadIdMap[it] },
+                        shareCode = null
+                    )
+                )
+                for (inn in incomingInnings.sortedBy { it.inningsNumber }) {
+                    val newInningsId = insertInnings(
+                        inn.copy(
+                            inningsId = 0,
+                            matchId = newMatchId,
+                            battingSquadId = inn.battingSquadId?.let { squadIdMap[it] },
+                            bowlingSquadId = inn.bowlingSquadId?.let { squadIdMap[it] }
+                        )
+                    )
+                    ballsByInnings[inn.inningsId].orEmpty()
+                        .sortedBy { it.ballId }
+                        .forEach { ball -> insertBallEvent(ball.copy(ballId = 0, inningsId = newInningsId)) }
+                }
+            }
+
+            val localMerges = getAllPlayerMerges()
+            for (m in snapshot.playerMerges) {
+                val exists = localMerges.any {
+                    norm(it.fromName) == norm(m.fromName) && norm(it.fromTeam) == norm(m.fromTeam) &&
+                        norm(it.toName) == norm(m.toName) && norm(it.toTeam) == norm(m.toTeam)
+                }
+                if (!exists) {
+                    insertPlayerMerge(m.copy(mergeId = 0))
+                    mergesAdded++
+                }
+            }
+        }
+
+        return ImportResult(squadsAdded, playersAdded, matchesAdded, matchesUpdated, matchesSkipped, mergesAdded)
     }
 
     /** req #3: reopens a tied, completed match onto a fresh Super Over innings, atomically —

@@ -39,4 +39,14 @@ object RecentPlayersStore {
     }
 
     fun addName(context: Context, name: String) = addNames(context, listOf(name))
+
+    /** "Merge players": forget misspelt names so the dropdowns stop offering them. */
+    fun removeNames(context: Context, names: Collection<String>) {
+        val drop = names.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+        if (drop.isEmpty()) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getStringSet(KEY_NAMES, emptySet()) ?: emptySet()
+        val kept = existing.filter { it.trim().lowercase() !in drop }.toSet()
+        if (kept.size != existing.size) prefs.edit().putStringSet(KEY_NAMES, kept).apply()
+    }
 }

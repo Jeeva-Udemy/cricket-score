@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SportsCricket
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -41,7 +42,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import com.example.cricketscorer.backup.ShareUtils
+import com.example.cricketscorer.viewmodel.ShareDataUiState
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,13 +82,33 @@ fun HomeScreen(
     onRankings: () -> Unit = {},
     onTournaments: () -> Unit = {},
     onMatchHistory: () -> Unit = {},
-    onOpenRooms: () -> Unit = {}
+    onOpenRooms: () -> Unit = {},
+    /** A Wickt data file opened from outside the app (e.g. tapped in WhatsApp). */
+    externalImportUri: android.net.Uri? = null,
+    onExternalImportConsumed: () -> Unit = {}
 ) {
     val backupState by viewModel.backupState.collectAsState()
     val lastBackupAt by viewModel.lastBackupAt.collectAsState()
     val backupScope by viewModel.backupScope.collectAsState()
     val resyncScope by viewModel.resyncScope.collectAsState()
     var showBackupDialog by remember { mutableStateOf(false) }
+    var showShareDialog by remember { mutableStateOf(false) }
+    val shareState by viewModel.shareState.collectAsState()
+    var shareScope by remember { mutableStateOf(BackupDataScope.BOTH) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // Share Data: pick a file received from a teammate (WhatsApp saves documents to the phone).
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) viewModel.openImportFile(uri) }
+
+    LaunchedEffect(externalImportUri) {
+        externalImportUri?.let {
+            viewModel.openImportFile(it)
+            onExternalImportConsumed()
+        }
+    }
 
     // ---- Google Sign-In launcher (req #1: Backup & Resync) ----
     val signInLauncher = rememberLauncherForActivityResult(
@@ -135,7 +162,9 @@ fun HomeScreen(
                 HomeAction("Rankings", Icons.Default.Leaderboard, Color(0xFFDCF1F5), onRankings),
                 HomeAction("Tournaments", Icons.Default.EmojiEvents, Color(0xFFDCF1F5), onTournaments),
                 HomeAction("Backup & Resync", Icons.Default.CloudSync, Color(0xFFFBE9D0), { showBackupDialog = true }),
-                HomeAction("Room", Icons.Default.GroupAdd, Color(0xFFDCE8FB), onOpenRooms)
+                HomeAction("Room", Icons.Default.GroupAdd, Color(0xFFDCE8FB), onOpenRooms),
+                // Share matches + squads with a teammate who just installed the app.
+                HomeAction("Share Data", Icons.Default.Share, Color(0xFFDCEFD9), { showShareDialog = true })
             )
 
             // req #1: a plain chunked Column/Row grid instead of a height-constrained
@@ -202,7 +231,153 @@ fun HomeScreen(
             }
         )
     }
+    if (showShareDialog) {
+        ShareDataDialog(
+            scope = shareScope,
+            onScopeChange = { shareScope = it },
+            busy = shareState is ShareDataUiState.Working,
+            onShare = { preferWhatsApp ->
+                scope.launch {
+                    val file = viewModel.buildShareFile(shareScope) ?: return@launch
+                    ShareUtils.shareFile(
+                        context = context,
+                        uri = file.first,
+                        mimeType = "application/json",
+                        message = file.second,
+                        chooserTitle = "Share Wickt data",
+                        preferWhatsApp = preferWhatsApp
+                    )
+                }
+            },
+            onImport = {
+                showShareDialog = false
+                importLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*"))
+            },
+            onDismiss = { showShareDialog = false }
+        )
+    }
+
+    ShareDataStatusDialogs(
+        state = shareState,
+        onConfirmImport = { viewModel.confirmImport(it) },
+        onDismiss = { viewModel.dismissShareState() }
+    )
 }
+
+/**
+ * Share Data: a teammate who installs the app fresh starts with nothing. This sends your teams
+ * and/or match history as a small file (e.g. over WhatsApp); they open it with Wickt, or use
+ * Import here, and it's ADDED to whatever is already on their phone.
+ */
+@Composable
+private fun ShareDataDialog(
+    scope: BackupDataScope,
+    onScopeChange: (BackupDataScope) -> Unit,
+    busy: Boolean,
+    onShare: (preferWhatsApp: Boolean) -> Unit,
+    onImport: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Share Data") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Send your teams (squads) and match history to a teammate. They open the " +
+                        "file with Wickt and it gets added to their app — nothing on their phone is deleted.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                BackupScopeDropdown(label = "What to share", selected = scope, enabled = !busy, onSelect = onScopeChange)
+                Button(
+                    onClick = { onShare(true) },
+                    enabled = !busy,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Send on WhatsApp") }
+                OutlinedButton(onClick = { onShare(false) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    Text("Send with another app")
+                }
+                if (busy) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.height(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Working…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                androidx.compose.material3.Divider()
+                Text("Got a file from a teammate?", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Tap it in WhatsApp and choose Wickt, or pick it here (WhatsApp saves received documents to your phone).",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedButton(onClick = onImport, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    Text("Import from File")
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+/** Import preview / result / error dialogs for Share Data — shared by Home and Match History. */
+@Composable
+internal fun ShareDataStatusDialogs(
+    state: ShareDataUiState,
+    onConfirmImport: (BackupDataScope) -> Unit,
+    onDismiss: () -> Unit
+) {
+    when (state) {
+        is ShareDataUiState.ImportPreview -> {
+            var importScope by remember(state) {
+                mutableStateOf(
+                    when {
+                        state.matchCount == 0 -> BackupDataScope.SQUAD
+                        state.squadCount == 0 -> BackupDataScope.MATCH
+                        else -> BackupDataScope.BOTH
+                    }
+                )
+            }
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("Import shared data?") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "This file has ${state.matchCount} match(es) and ${state.squadCount} team(s) " +
+                                "with ${state.playerCount} player(s).",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        BackupScopeDropdown(label = "Import", selected = importScope, enabled = true, onSelect = { importScope = it })
+                        Text(
+                            "Everything is added to what's already on this phone. Teams with the same name " +
+                                "are combined, and matches you already have are skipped.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = { Button(onClick = { onConfirmImport(importScope) }) { Text("Import") } },
+                dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+            )
+        }
+        is ShareDataUiState.Done -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Import complete") },
+            text = { Text(state.message) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
+        )
+        is ShareDataUiState.Error -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Share Data") },
+            text = { Text(state.message, color = MaterialTheme.colorScheme.error) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
+        )
+        else -> Unit
+    }
+}
+
 
 @Composable
 private fun HomeActionCard(action: HomeAction, modifier: Modifier = Modifier) {
@@ -518,7 +693,7 @@ private fun BackupDataScope.displayName(): String = when (this) {
 /** req #3: the Squad/Match/Both picker shared by both the Backup and Resync buttons above. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BackupScopeDropdown(
+internal fun BackupScopeDropdown(
     label: String,
     selected: BackupDataScope,
     enabled: Boolean,

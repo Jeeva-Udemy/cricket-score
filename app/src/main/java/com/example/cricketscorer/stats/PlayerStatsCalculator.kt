@@ -3,8 +3,8 @@ package com.example.cricketscorer.stats
 import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.data.PlayerMergeEntity
 import com.example.cricketscorer.model.ExtraType
-import com.example.cricketscorer.model.WicketType
 
 /**
  * Turns raw ball-by-ball data (the same [BallEventEntity] rows Undo relies on) into the
@@ -79,11 +79,19 @@ object PlayerStatsCalculator {
     data class PlayerCareerStats(
         val playerName: String,
         /** req: "sometimes a single player can play for multiple teams" — every distinct team
-         *  name this player has batted or bowled under, across whatever scope was passed in. */
+         *  name this player has batted or bowled under, across whatever scope was passed in.
+         *  More than one team only appears once the user has merged entries across teams. */
         val teams: Set<String>,
         val matches: Int,
         val batting: BattingStats,
-        val bowling: BowlingStats
+        val bowling: BowlingStats,
+        /** Unique identity (name + team, after merges) — use this, not [playerName], as a list
+         *  key: two different players can share a name. */
+        val playerKey: String = PlayerIdentity.key(playerName, teams.firstOrNull() ?: ""),
+        /** The team this player entry belongs to (what a merge row points at). */
+        val team: String = teams.firstOrNull() ?: "",
+        /** Other spellings that were merged into this player (for display). */
+        val mergedNames: Set<String> = emptySet()
     )
 
     /**
@@ -122,130 +130,172 @@ object PlayerStatsCalculator {
         var bestFigures: BowlingFigures? = null
     }
 
-    /** Bug fix: "why is there 2 different entries for [the same player] ... instead of 1" —
-     *  a name typed with a stray leading/trailing space (invisible once rendered in a list row)
-     *  used to be a different grouping key from the same name typed cleanly elsewhere, splitting
-     *  one player's career stats into two separate Rankings/Player Stats rows. Every name read
-     *  from ball events/innings in this file is normalized through here before it's used as a
-     *  key or compared against another name, so the same player always collapses into one row
-     *  regardless of stray whitespace in how their name happened to be entered match to match. */
-    private fun norm(name: String): String = name.trim()
+    /** Collects every raw spelling/team seen for one resolved player. */
+    private class Identity(val key: String) {
+        val nameVotes = mutableMapOf<String, Int>()
+        val teamVotes = mutableMapOf<String, Int>()
+        var canonicalName: String? = null
+        var canonicalTeam: String? = null
+        val rawNames = mutableSetOf<String>()
+        val teams = linkedMapOf<String, String>() // keyPart -> display
+        val matchIds = mutableSetOf<Long>()
+
+        fun displayName(): String = canonicalName ?: nameVotes.maxByOrNull { it.value }?.key ?: key
+        fun displayTeam(): String = canonicalTeam ?: teamVotes.maxByOrNull { it.value }?.key ?: ""
+    }
 
     /**
      * Aggregates every player who batted or bowled across [matches]. Scope is entirely the
      * caller's choice — pass every match ever played for career stats/Rankings, or just one
      * room's matches for that room's Player of the Series. [innings] and [ballEvents] must
      * cover (at least) all of [matches].
+     *
+     * Players are identified by name + team (see [PlayerIdentity]) — two players with the
+     * same name in different teams are no longer combined into one — and [merges] (from
+     * "Merge players") combine entries the user has confirmed are the same person.
      */
     fun computePlayerStats(
         matches: List<MatchEntity>,
         innings: List<InningsEntity>,
-        ballEvents: List<BallEventEntity>
+        ballEvents: List<BallEventEntity>,
+        merges: List<PlayerMergeEntity> = emptyList()
     ): List<PlayerCareerStats> {
+        val resolver = PlayerMergeResolver(merges)
         val matchById = matches.associateBy { it.matchId }
         val ballsByInnings = ballEvents.groupBy { it.inningsId }
 
-        val teamsByPlayer = mutableMapOf<String, MutableSet<String>>()
-        val matchesByPlayer = mutableMapOf<String, MutableSet<Long>>()
+        val identities = mutableMapOf<String, Identity>()
         val battingByPlayer = mutableMapOf<String, MutableBatting>()
         val bowlingByPlayer = mutableMapOf<String, MutableBowling>()
 
-        fun team(name: String, teamName: String?) {
-            if (teamName.isNullOrBlank()) return
-            teamsByPlayer.getOrPut(name) { mutableSetOf() }.add(teamName)
-        }
-        fun playedIn(name: String, matchId: Long) {
-            matchesByPlayer.getOrPut(name) { mutableSetOf() }.add(matchId)
+        /** Resolves a raw (name, team) to its identity key, recording how it was spelt. */
+        fun identify(rawName: String, rawTeam: String, matchId: Long): String {
+            val resolved = resolver.resolve(rawName, rawTeam)
+            val id = identities.getOrPut(resolved.key) { Identity(resolved.key) }
+            val cleanName = PlayerIdentity.clean(rawName)
+            val cleanTeam = PlayerIdentity.clean(rawTeam)
+            if (resolved.wasMerged) {
+                id.canonicalName = resolved.name
+                id.canonicalTeam = resolved.team
+            } else {
+                id.nameVotes[cleanName] = (id.nameVotes[cleanName] ?: 0) + 1
+                id.teamVotes[cleanTeam] = (id.teamVotes[cleanTeam] ?: 0) + 1
+            }
+            id.rawNames += cleanName
+            if (cleanTeam.isNotBlank()) id.teams.putIfAbsent(PlayerIdentity.keyPart(cleanTeam), cleanTeam)
+            id.matchIds += matchId
+            return resolved.key
         }
 
         for (inn in innings) {
             val match = matchById[inn.matchId] ?: continue
             val balls = ballsByInnings[inn.inningsId].orEmpty()
+            val inningsOver = inn.isCompleted || match.isCompleted
 
-            // ---- Batting: every player who's ever appeared as this innings' striker or
-            // non-striker (ball-by-ball snapshots catch anyone who came in but never faced a
-            // ball too, e.g. a non-striker run out backing up). ----
+            // ---- Batting: everyone who faced a ball, was dismissed (a non-striker run out
+            // without facing a ball included), or is still at the crease. Raw names are
+            // grouped by their exact spelling first, then resolved to an identity. ----
             val battersInInnings = linkedSetOf<String>()
-            balls.forEach { b -> if (b.strikerName.isNotBlank()) battersInInnings.add(norm(b.strikerName)) }
-            if (inn.strikerName.isNotBlank()) battersInInnings.add(norm(inn.strikerName))
-            if (inn.nonStrikerName.isNotBlank()) battersInInnings.add(norm(inn.nonStrikerName))
+            balls.forEach { b ->
+                if (b.strikerName.isNotBlank()) battersInInnings.add(PlayerIdentity.clean(b.strikerName))
+                if (b.isWicket) {
+                    val out = ScorecardCalculator.dismissedName(b)
+                    if (out.isNotBlank()) battersInInnings.add(PlayerIdentity.clean(out))
+                }
+            }
+            if (inn.strikerName.isNotBlank()) battersInInnings.add(PlayerIdentity.clean(inn.strikerName))
+            if (inn.nonStrikerName.isNotBlank()) battersInInnings.add(PlayerIdentity.clean(inn.nonStrikerName))
+
+            // Several raw spellings can resolve to the same player inside one innings only if
+            // the user merged them; aggregate per identity so that counts as ONE innings.
+            data class InningsBat(var runs: Int = 0, var balls: Int = 0, var fours: Int = 0, var sixes: Int = 0, var out: Boolean = false)
+            val perIdentity = linkedMapOf<String, InningsBat>()
 
             for (batter in battersInInnings) {
-                val theirBalls = balls.filter { norm(it.strikerName) == batter }
+                val theirBalls = balls.filter { PlayerIdentity.clean(it.strikerName) == batter }
                 var runs = 0
                 var ballsFaced = 0
                 var fours = 0
                 var sixes = 0
                 theirBalls.forEach { b ->
-                    if (b.extraType != ExtraType.WIDE) ballsFaced++
+                    if (b.extraType != ExtraType.WIDE && b.extraType != ExtraType.PENALTY) ballsFaced++
                     if (b.extraType == ExtraType.NONE || b.extraType == ExtraType.NO_BALL) {
                         runs += b.runsScored
                         if (b.runsScored == 4) fours++
                         if (b.runsScored == 6) sixes++
                     }
                 }
-                val isOut = balls.any { it.isWicket && norm(it.dismissedPlayerName) == batter }
+                val isOut = balls.any { it.isWicket && PlayerIdentity.clean(ScorecardCalculator.dismissedName(it)) == batter }
                 // Skip a batter who's only ever been the *waiting* non-striker so far in a
                 // still-live innings — don't record a premature "not out, 0(0)" for someone who
                 // simply hasn't come in yet. Once the innings/match is over, everyone who was
                 // ever at the crease gets a real entry, including an unbeaten 0.
-                val inningsOver = inn.isCompleted || match.isCompleted
                 if (!isOut && !inningsOver && ballsFaced == 0) continue
 
-                team(batter, inn.battingTeam)
-                playedIn(batter, match.matchId)
-                val stats = battingByPlayer.getOrPut(batter) { MutableBatting() }
+                val key = identify(batter, inn.battingTeam, match.matchId)
+                val agg = perIdentity.getOrPut(key) { InningsBat() }
+                agg.runs += runs
+                agg.balls += ballsFaced
+                agg.fours += fours
+                agg.sixes += sixes
+                agg.out = agg.out || isOut
+            }
+
+            for ((key, agg) in perIdentity) {
+                val stats = battingByPlayer.getOrPut(key) { MutableBatting() }
                 stats.innings++
-                if (!isOut) stats.notOuts++
-                stats.runs += runs
-                stats.ballsFaced += ballsFaced
-                stats.fours += fours
-                stats.sixes += sixes
-                if (runs > stats.highScore || (runs == stats.highScore && !isOut && !stats.highScoreNotOut)) {
-                    stats.highScore = runs
-                    stats.highScoreNotOut = !isOut
+                if (!agg.out) stats.notOuts++
+                stats.runs += agg.runs
+                stats.ballsFaced += agg.balls
+                stats.fours += agg.fours
+                stats.sixes += agg.sixes
+                if (agg.runs > stats.highScore || (agg.runs == stats.highScore && !agg.out && !stats.highScoreNotOut)) {
+                    stats.highScore = agg.runs
+                    stats.highScoreNotOut = !agg.out
                 }
             }
 
             // ---- Bowling: every bowler who's sent down at least one ball in this innings ----
-            val bowlersInInnings = balls.mapNotNull { norm(it.bowlerName).takeIf { n -> n.isNotBlank() } }.toSet()
-            for (bowler in bowlersInInnings) {
-                val theirBalls = balls.filter { norm(it.bowlerName) == bowler }
-                if (theirBalls.isEmpty()) continue
-
-                var ballsBowled = 0
-                var runsConceded = 0
-                var wickets = 0
-                theirBalls.forEach { b ->
-                    if (b.extraType != ExtraType.WIDE && b.extraType != ExtraType.NO_BALL) ballsBowled++
-                    runsConceded += when (b.extraType) {
-                        ExtraType.NONE -> b.runsScored
-                        ExtraType.WIDE, ExtraType.NO_BALL -> b.extraRuns + b.runsScored
-                        ExtraType.BYE, ExtraType.LEG_BYE, ExtraType.PENALTY -> 0
-                    }
-                    if (b.isWicket && b.wicketType != WicketType.NONE && b.wicketType != WicketType.RUN_OUT) wickets++
+            data class InningsBowl(var balls: Int = 0, var runs: Int = 0, var wickets: Int = 0)
+            val perBowler = linkedMapOf<String, InningsBowl>()
+            balls.filter { it.bowlerName.isNotBlank() }.forEach { b ->
+                val key = identify(b.bowlerName, inn.bowlingTeam, match.matchId)
+                val agg = perBowler.getOrPut(key) { InningsBowl() }
+                if (b.extraType != ExtraType.WIDE && b.extraType != ExtraType.NO_BALL && b.extraType != ExtraType.PENALTY) agg.balls++
+                agg.runs += when (b.extraType) {
+                    ExtraType.NONE -> b.runsScored
+                    ExtraType.WIDE, ExtraType.NO_BALL -> b.extraRuns + b.runsScored
+                    ExtraType.BYE, ExtraType.LEG_BYE, ExtraType.PENALTY -> 0
                 }
-
-                team(bowler, inn.bowlingTeam)
-                playedIn(bowler, match.matchId)
-                val stats = bowlingByPlayer.getOrPut(bowler) { MutableBowling() }
+                if (ScorecardCalculator.isBowlerWicket(b)) agg.wickets++
+            }
+            for ((key, agg) in perBowler) {
+                val stats = bowlingByPlayer.getOrPut(key) { MutableBowling() }
                 stats.inningsBowled++
-                stats.ballsBowled += ballsBowled
-                stats.runsConceded += runsConceded
-                stats.wickets += wickets
-                val figures = BowlingFigures(wickets, runsConceded)
+                stats.ballsBowled += agg.balls
+                stats.runsConceded += agg.runs
+                stats.wickets += agg.wickets
+                val figures = BowlingFigures(agg.wickets, agg.runs)
                 if (stats.bestFigures == null || figures > stats.bestFigures!!) stats.bestFigures = figures
             }
         }
 
-        val allPlayers = (battingByPlayer.keys + bowlingByPlayer.keys).toSortedSet()
-        return allPlayers.map { name ->
-            val b = battingByPlayer[name]
-            val bowl = bowlingByPlayer[name]
+        val allKeys = battingByPlayer.keys + bowlingByPlayer.keys
+        return allKeys.map { key ->
+            val id = identities.getValue(key)
+            val b = battingByPlayer[key]
+            val bowl = bowlingByPlayer[key]
+            val name = id.displayName()
+            val team = id.displayTeam()
+            // Primary team first, then any other team merged in.
+            val teams = linkedSetOf<String>().apply {
+                if (team.isNotBlank()) add(team)
+                id.teams.values.forEach { t -> if (none { PlayerIdentity.keyPart(it) == PlayerIdentity.keyPart(t) }) add(t) }
+            }
             PlayerCareerStats(
                 playerName = name,
-                teams = teamsByPlayer[name].orEmpty(),
-                matches = matchesByPlayer[name]?.size ?: 0,
+                teams = teams,
+                matches = id.matchIds.size,
                 batting = BattingStats(
                     innings = b?.innings ?: 0,
                     notOuts = b?.notOuts ?: 0,
@@ -262,9 +312,12 @@ object PlayerStatsCalculator {
                     runsConceded = bowl?.runsConceded ?: 0,
                     wickets = bowl?.wickets ?: 0,
                     bestFigures = bowl?.bestFigures
-                )
+                ),
+                playerKey = key,
+                team = team,
+                mergedNames = id.rawNames.filter { PlayerIdentity.keyPart(it) != PlayerIdentity.keyPart(name) }.toSet()
             )
-        }
+        }.sortedWith(compareBy({ it.playerName.lowercase() }, { it.team.lowercase() }))
     }
 
     /** req: "For each match we need to show who's the Player of the Match." Null only if the
@@ -272,23 +325,26 @@ object PlayerStatsCalculator {
     fun computePlayerOfTheMatch(
         match: MatchEntity,
         innings: List<InningsEntity>,
-        ballEvents: List<BallEventEntity>
-    ): PlayerAward? = topAward(listOf(match), innings, ballEvents)
+        ballEvents: List<BallEventEntity>,
+        merges: List<PlayerMergeEntity> = emptyList()
+    ): PlayerAward? = topAward(listOf(match), innings, ballEvents, merges)
 
     /** req: "If we are playing multiple matches in a single room then we need to show who's
      *  the Player of the series." Same points system, summed across every match passed in. */
     fun computePlayerOfTheSeries(
         matches: List<MatchEntity>,
         innings: List<InningsEntity>,
-        ballEvents: List<BallEventEntity>
-    ): PlayerAward? = topAward(matches, innings, ballEvents)
+        ballEvents: List<BallEventEntity>,
+        merges: List<PlayerMergeEntity> = emptyList()
+    ): PlayerAward? = topAward(matches, innings, ballEvents, merges)
 
     private fun topAward(
         matches: List<MatchEntity>,
         innings: List<InningsEntity>,
-        ballEvents: List<BallEventEntity>
+        ballEvents: List<BallEventEntity>,
+        merges: List<PlayerMergeEntity>
     ): PlayerAward? {
-        val stats = computePlayerStats(matches, innings, ballEvents)
+        val stats = computePlayerStats(matches, innings, ballEvents, merges)
         return stats
             .map { p ->
                 val points = p.batting.runs + p.batting.fours + p.batting.sixes * 2 + p.bowling.wickets * 20

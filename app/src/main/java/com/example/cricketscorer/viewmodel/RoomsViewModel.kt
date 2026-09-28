@@ -102,7 +102,7 @@ class RoomsViewModel(
     suspend fun playerOfTheMatch(match: MatchEntity): PlayerStatsCalculator.PlayerAward? {
         if (!match.isCompleted) return null
         val snapshot = repository.getSnapshotForMatch(match.matchId)
-        return PlayerStatsCalculator.computePlayerOfTheMatch(match, snapshot.innings, snapshot.ballEvents)
+        return PlayerStatsCalculator.computePlayerOfTheMatch(match, snapshot.innings, snapshot.ballEvents, repository.getPlayerMerges())
     }
 
     /** req: "If we are playing multiple matches in a single room then we need to show who's
@@ -118,7 +118,7 @@ class RoomsViewModel(
             innings += snapshot.innings
             ballEvents += snapshot.ballEvents
         }
-        return PlayerStatsCalculator.computePlayerOfTheSeries(completed, innings, ballEvents)
+        return PlayerStatsCalculator.computePlayerOfTheSeries(completed, innings, ballEvents, repository.getPlayerMerges())
     }
 
     /** Picks back up an already-joined room on this ViewModel's construction, so the user

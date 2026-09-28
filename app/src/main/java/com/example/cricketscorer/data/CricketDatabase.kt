@@ -14,9 +14,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         InningsEntity::class,
         BallEventEntity::class,
         SquadEntity::class,
-        PlayerEntity::class
+        PlayerEntity::class,
+        PlayerMergeEntity::class
     ],
-    version = 7, // v7: req #3 Super Over — MatchEntity.wasSuperOver, InningsEntity.isSuperOver
+    // v7: req #3 Super Over — MatchEntity.wasSuperOver, InningsEntity.isSuperOver
+    // v8: "Merge players" — new player_merges table
+    version = 8,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -39,6 +42,22 @@ abstract class CricketDatabase : RoomDatabase() {
             }
         }
 
+        /** v7 -> v8: adds the player_merges table only. No existing table is touched, so
+         *  upgrading never loses matches, squads or history. */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `player_merges` (" +
+                        "`mergeId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`fromName` TEXT NOT NULL, " +
+                        "`fromTeam` TEXT NOT NULL, " +
+                        "`toName` TEXT NOT NULL, " +
+                        "`toTeam` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): CricketDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -46,7 +65,7 @@ abstract class CricketDatabase : RoomDatabase() {
                     CricketDatabase::class.java,
                     "cricket_scorer_db"
                 )
-                    .addMigrations(MIGRATION_6_7)
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8)
                     // Safety net for any OTHER schema drift this migration doesn't cover — the
                     // explicit migration above means a normal v6 -> v7 upgrade never hits this
                     // destructive path.

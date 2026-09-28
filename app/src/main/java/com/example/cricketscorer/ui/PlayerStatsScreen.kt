@@ -9,18 +9,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,7 +30,6 @@ import kotlin.math.roundToInt
  * A straight directory (alphabetical), unlike Rankings which sorts by who's actually best —
  * see [RankingsScreen].
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerStatsScreen(
     viewModel: PlayerStatsViewModel,
@@ -46,27 +37,18 @@ fun PlayerStatsScreen(
 ) {
     val players by viewModel.players.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val mergeMode by viewModel.mergeMode.collectAsState()
+    val selectedKeys by viewModel.selectedKeys.collectAsState()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Player Stats") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        }
-    ) { padding ->
+    PlayerMergeScaffold(title = "Player Stats", viewModel = viewModel, onNavigateBack = onNavigateBack) {
         when {
             isLoading -> Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) { CircularProgressIndicator() }
 
             players.isEmpty() -> Box(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                modifier = Modifier.fillMaxSize().padding(24.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -77,12 +59,19 @@ fun PlayerStatsScreen(
             }
 
             else -> LazyColumn(
-                contentPadding = padding,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                items(players, key = { it.playerName }) { player ->
-                    PlayerStatsCard(player)
+                // Keyed by name + team: two players can share a name (different teams).
+                items(players, key = { it.playerKey }) { player ->
+                    SelectablePlayerCard(
+                        player = player,
+                        mergeMode = mergeMode,
+                        isSelected = player.playerKey in selectedKeys,
+                        onToggle = { viewModel.toggleSelection(it) }
+                    ) {
+                        PlayerStatsCard(player)
+                    }
                 }
             }
         }
@@ -91,50 +80,55 @@ fun PlayerStatsScreen(
 
 @Composable
 internal fun PlayerStatsCard(player: PlayerStatsCalculator.PlayerCareerStats) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(player.playerName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(
-                    "${player.matches} match" + if (player.matches == 1) "" else "es",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (player.teams.isNotEmpty()) {
-                Text(
-                    player.teams.sorted().joinToString(", "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Divider()
-            if (player.batting.innings > 0) {
-                val b = player.batting
-                val hs = "${b.highScore}${if (b.highScoreNotOut) "*" else ""}"
-                Text(
-                    "Bat: ${b.runs} runs, ${b.innings} inns (${b.notOuts} not out) • " +
-                        "SR ${formatDecimal(b.strikeRate)} • Avg ${b.average?.let { formatDecimal(it) } ?: "-"} • HS $hs",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            if (player.bowling.wickets > 0 || player.bowling.ballsBowled > 0) {
-                val bo = player.bowling
-                Text(
-                    "Bowl: ${bo.wickets} wkts, ${bo.overs} overs • " +
-                        "Econ ${bo.economy?.let { formatDecimal(it) } ?: "-"} • " +
-                        "Avg ${bo.average?.let { formatDecimal(it) } ?: "-"} • " +
-                        "Best ${bo.bestFigures ?: "-"}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
+            Text(player.playerName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "${player.matches} match" + if (player.matches == 1) "" else "es",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (player.teams.isNotEmpty()) {
+            Text(
+                player.teams.joinToString(", "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (player.mergedNames.isNotEmpty()) {
+            Text(
+                "Also entered as: " + player.mergedNames.sorted().joinToString(", "),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Divider()
+        if (player.batting.innings > 0) {
+            val b = player.batting
+            val hs = "${b.highScore}${if (b.highScoreNotOut) "*" else ""}"
+            Text(
+                "Bat: ${b.runs} runs, ${b.innings} inns (${b.notOuts} not out) • " +
+                    "SR ${formatDecimal(b.strikeRate)} • Avg ${b.average?.let { formatDecimal(it) } ?: "-"} • HS $hs",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        if (player.bowling.wickets > 0 || player.bowling.ballsBowled > 0) {
+            val bo = player.bowling
+            Text(
+                "Bowl: ${bo.wickets} wkts, ${bo.overs} overs • " +
+                    "Econ ${bo.economy?.let { formatDecimal(it) } ?: "-"} • " +
+                    "Avg ${bo.average?.let { formatDecimal(it) } ?: "-"} • " +
+                    "Best ${bo.bestFigures ?: "-"}",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }

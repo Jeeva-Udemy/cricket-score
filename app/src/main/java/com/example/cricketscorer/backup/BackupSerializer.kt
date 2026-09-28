@@ -5,6 +5,7 @@ import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.data.PlayerEntity
+import com.example.cricketscorer.data.PlayerMergeEntity
 import com.example.cricketscorer.data.SquadEntity
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.TossDecision
@@ -32,6 +33,7 @@ object BackupSerializer {
         root.put("ballEvents", JSONArray(snapshot.ballEvents.map { it.toJson() }))
         root.put("squads", JSONArray(snapshot.squads.map { it.toJson() }))
         root.put("players", JSONArray(snapshot.players.map { it.toJson() }))
+        root.put("playerMerges", JSONArray(snapshot.playerMerges.map { it.toJson() }))
         return root.toString()
     }
 
@@ -42,7 +44,8 @@ object BackupSerializer {
         val ballEvents = root.optJSONArray("ballEvents")?.toObjectList()?.map { it.toBallEventEntity() } ?: emptyList()
         val squads = root.optJSONArray("squads")?.toObjectList()?.map { it.toSquadEntity() } ?: emptyList()
         val players = root.optJSONArray("players")?.toObjectList()?.map { it.toPlayerEntity() } ?: emptyList()
-        return BackupSnapshot(matches, innings, ballEvents, squads, players)
+        val merges = root.optJSONArray("playerMerges")?.toObjectList()?.map { it.toPlayerMergeEntity() } ?: emptyList()
+        return BackupSnapshot(matches, innings, ballEvents, squads, players, merges)
     }
 
     private fun JSONArray.toObjectList(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
@@ -64,6 +67,7 @@ object BackupSerializer {
         put("resultSummary", resultSummary ?: JSONObject.NULL)
         put("createdAt", createdAt)
         put("shareCode", shareCode ?: JSONObject.NULL)
+        put("wasSuperOver", wasSuperOver)
     }
 
     private fun JSONObject.toMatchEntity(): MatchEntity = MatchEntity(
@@ -80,7 +84,8 @@ object BackupSerializer {
         isCompleted = optBoolean("isCompleted", false),
         resultSummary = if (isNull("resultSummary")) null else getString("resultSummary"),
         createdAt = optLong("createdAt", System.currentTimeMillis()),
-        shareCode = if (has("shareCode") && !isNull("shareCode")) getString("shareCode") else null
+        shareCode = if (has("shareCode") && !isNull("shareCode")) getString("shareCode") else null,
+        wasSuperOver = optBoolean("wasSuperOver", false)
     )
 
     // ---- Innings ----
@@ -110,6 +115,7 @@ object BackupSerializer {
         put("nextBatsmanNumber", nextBatsmanNumber)
         put("target", target ?: JSONObject.NULL)
         put("isCompleted", isCompleted)
+        put("isSuperOver", isSuperOver)
     }
 
     private fun JSONObject.toInningsEntity(): InningsEntity = InningsEntity(
@@ -136,7 +142,8 @@ object BackupSerializer {
         currentBowlerName = optString("currentBowlerName", "Bowler 1"),
         nextBatsmanNumber = optInt("nextBatsmanNumber", 3),
         target = if (isNull("target")) null else getInt("target"),
-        isCompleted = optBoolean("isCompleted", false)
+        isCompleted = optBoolean("isCompleted", false),
+        isSuperOver = optBoolean("isSuperOver", false)
     )
 
     // ---- Ball events ----
@@ -232,6 +239,26 @@ object BackupSerializer {
         playerId = getLong("playerId"),
         squadId = getLong("squadId"),
         name = getString("name"),
+        createdAt = optLong("createdAt", System.currentTimeMillis())
+    )
+
+    // ---- Player merges ----
+
+    private fun PlayerMergeEntity.toJson(): JSONObject = JSONObject().apply {
+        put("mergeId", mergeId)
+        put("fromName", fromName)
+        put("fromTeam", fromTeam)
+        put("toName", toName)
+        put("toTeam", toTeam)
+        put("createdAt", createdAt)
+    }
+
+    private fun JSONObject.toPlayerMergeEntity(): PlayerMergeEntity = PlayerMergeEntity(
+        mergeId = optLong("mergeId", 0),
+        fromName = getString("fromName"),
+        fromTeam = optString("fromTeam", ""),
+        toName = getString("toName"),
+        toTeam = optString("toTeam", ""),
         createdAt = optLong("createdAt", System.currentTimeMillis())
     )
 }

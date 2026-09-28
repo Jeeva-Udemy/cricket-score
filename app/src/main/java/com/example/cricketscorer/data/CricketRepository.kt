@@ -142,8 +142,44 @@ class CricketRepository(private val dao: CricketDao) {
             innings = if (includeMatch) dao.getAllInnings() else emptyList(),
             ballEvents = if (includeMatch) dao.getAllBallEvents() else emptyList(),
             squads = if (includeSquad) dao.getAllSquads() else emptyList(),
-            players = if (includeSquad) dao.getAllPlayers() else emptyList()
+            players = if (includeSquad) dao.getAllPlayers() else emptyList(),
+            // Player merges only affect match stats, so they travel with the match category.
+            playerMerges = if (includeMatch) dao.getAllPlayerMerges() else emptyList()
         )
+    }
+
+    /**
+     * Share Data: a self-contained snapshot of just [matchIds] (their innings, balls, the
+     * squads/players they were set up from, and every player merge) — what "Share selected
+     * matches" in Match History sends to a teammate.
+     */
+    suspend fun getSnapshotForMatches(matchIds: Collection<Long>): BackupSnapshot {
+        val parts = matchIds.map { getSnapshotForMatch(it) }
+        return BackupSnapshot(
+            matches = parts.flatMap { it.matches },
+            innings = parts.flatMap { it.innings },
+            ballEvents = parts.flatMap { it.ballEvents },
+            squads = parts.flatMap { it.squads }.distinctBy { it.squadId },
+            players = parts.flatMap { it.players }.distinctBy { it.playerId },
+            playerMerges = dao.getAllPlayerMerges()
+        )
+    }
+
+    /** Share Data: merges a teammate's shared file into local data (never wipes anything) —
+     *  see [CricketDao.importSharedSnapshot]. */
+    suspend fun importSharedSnapshot(snapshot: BackupSnapshot, scope: BackupDataScope): ImportResult =
+        dao.importSharedSnapshot(
+            snapshot,
+            includeSquads = scope != BackupDataScope.MATCH,
+            includeMatches = scope != BackupDataScope.SQUAD
+        )
+
+    // ---------- Player merges ("Merge players") ----------
+    fun observePlayerMerges(): Flow<List<PlayerMergeEntity>> = dao.observeAllPlayerMerges()
+    suspend fun getPlayerMerges(): List<PlayerMergeEntity> = dao.getAllPlayerMerges()
+    suspend fun addPlayerMerges(merges: List<PlayerMergeEntity>) = dao.insertPlayerMerges(merges)
+    suspend fun deletePlayerMerges(mergeIds: List<Long>) {
+        if (mergeIds.isNotEmpty()) dao.deletePlayerMerges(mergeIds)
     }
 
     /**
@@ -167,6 +203,12 @@ class CricketRepository(private val dao: CricketDao) {
             snapshot.matches.forEach { dao.restoreMatch(it) }
             snapshot.innings.forEach { dao.restoreInnings(it) }
             snapshot.ballEvents.forEach { dao.restoreBallEvent(it) }
+            // Older backups have no merges at all — only replace local merges when the file
+            // actually carries some, so restoring an old backup doesn't silently undo them.
+            if (snapshot.playerMerges.isNotEmpty()) {
+                dao.clearAllPlayerMerges()
+                snapshot.playerMerges.forEach { dao.restorePlayerMerge(it) }
+            }
         }
     }
 }
@@ -177,8 +219,33 @@ data class BackupSnapshot(
     val innings: List<InningsEntity>,
     val ballEvents: List<BallEventEntity>,
     val squads: List<SquadEntity>,
-    val players: List<PlayerEntity>
+    val players: List<PlayerEntity>,
+    /** "Merge players" rows. Defaults to empty so every existing caller (and Cloud Sync's
+     *  per-match snapshots, which never carry merges) is unaffected. */
+    val playerMerges: List<PlayerMergeEntity> = emptyList()
 )
+
+/** Outcome of importing a teammate's shared data file, shown to the user afterwards. */
+data class ImportResult(
+    val squadsAdded: Int,
+    val playersAdded: Int,
+    val matchesAdded: Int,
+    val matchesUpdated: Int,
+    val matchesSkipped: Int,
+    val mergesAdded: Int
+) {
+    fun describe(): String {
+        val parts = mutableListOf<String>()
+        if (matchesAdded > 0) parts += "$matchesAdded match(es) added"
+        if (matchesUpdated > 0) parts += "$matchesUpdated match(es) updated"
+        if (squadsAdded > 0) parts += "$squadsAdded team(s) added"
+        if (playersAdded > 0) parts += "$playersAdded player(s) added"
+        if (mergesAdded > 0) parts += "$mergesAdded player merge(s) added"
+        if (matchesSkipped > 0) parts += "$matchesSkipped match(es) already on this phone"
+        return if (parts.isEmpty()) "Nothing new to import — this phone already has everything in that file."
+        else "Imported: " + parts.joinToString(", ") + "."
+    }
+}
 
 /** req #3: "keep a dropdown to Backup only for Squad, Match and Both ... same goes for Resync." */
 enum class BackupDataScope { SQUAD, MATCH, BOTH }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files the app hands to other apps (WhatsApp etc.) via FileProvider: the Match Dashboard
+     image and Share Data files. Both are written to cache/shared/ and overwritten each time. -->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>

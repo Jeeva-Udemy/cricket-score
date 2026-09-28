@@ -132,3 +132,22 @@ much larger project)
   as a single compound event — the UI treats "extra" and "wicket" as separate
   actions, matching how most simple scoring apps work.
 - Follow-on, DLS/rain rules, and super overs are not implemented.
+
+## Recent changes
+- **Run-out fix** — the Wicket dialog now asks *which batsman* is run out (by name, nothing
+  pre-selected), the runs completed, and which end the new batsman comes in at, with a
+  "Next ball: X on strike" preview. The scorecard now marks the batsman who was actually
+  dismissed (it used to mark the striker when the non-striker was run out), and run-outs are
+  no longer credited to the bowler.
+- **Rankings / Player Stats** — players are identified by name + team, so two players with
+  the same name in different teams stay separate. Names differing only in case/spaces are
+  treated as the same player.
+- **Merge players** — Player Stats / Rankings → merge icon (or long-press a player), tick the
+  duplicate entries (suggested duplicates are shown), choose the correct name → Merge. Stats
+  are combined without rewriting scorecards; undo from the history icon. (DB v8: `player_merges`.)
+- **Match Dashboard** — dashboard icon on the scoring screen, or "Match summary / share" in
+  Match History: the whole match as one image, shareable straight to WhatsApp.
+- **Share Data** — Home → Share Data sends squads and/or matches as a file (e.g. on WhatsApp).
+  The teammate taps the file and opens it with Wickt, or uses Import from File; data is added
+  to theirs (no deletion, duplicates skipped). Match History selection mode can also share just
+  the selected matches.

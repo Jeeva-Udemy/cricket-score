@@ -15,6 +15,8 @@ import com.example.cricketscorer.data.RoomStore
 import com.example.cricketscorer.model.DismissedEnd
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.WicketType
+import com.example.cricketscorer.stats.CreasePositions
+import com.example.cricketscorer.stats.ScorecardCalculator
 import com.example.cricketscorer.sync.CloudSync
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.Job
@@ -207,7 +209,7 @@ data class ScoringUiState(
     val outBatsmanNames: Set<String>
         get() = selectedInningsBallEvents
             .filter { it.isWicket }
-            .map { it.dismissedPlayerName.ifBlank { it.strikerName } }
+            .map { ScorecardCalculator.dismissedName(it) }
             .filter { it.isNotBlank() }
             .toSet()
 
@@ -258,102 +260,35 @@ data class ScoringUiState(
             return summaries
         }
 
+    /** Delegates to [ScorecardCalculator] (shared with the Match Dashboard). Run-out fix:
+     *  the batsman shown as out is the one actually dismissed, not whoever was on strike. */
     val batsmanStats: List<BatsmanStat>
         get() {
             val inn = currentInnings ?: return emptyList()
-            val balls = selectedInningsBallEvents
-            val names = mutableSetOf<String>()
-
-            if (inn.strikerName.isNotBlank()) names.add(inn.strikerName)
-            if (inn.nonStrikerName.isNotBlank()) names.add(inn.nonStrikerName)
-            balls.forEach {
-                if (it.strikerName.isNotBlank()) names.add(it.strikerName)
-                if (it.dismissedPlayerName.isNotBlank()) names.add(it.dismissedPlayerName)
-            }
-
-            val list = mutableListOf<BatsmanStat>()
-            for (name in names) {
-                val batsmanBalls = balls.filter { it.strikerName == name }
-                val runs = batsmanBalls.filter {
-                    it.extraType == ExtraType.NONE || it.extraType == ExtraType.NO_BALL
-                }.sumOf { it.runsScored }
-
-                val ballsFaced = batsmanBalls.count {
-                    it.extraType != ExtraType.WIDE && it.extraType != ExtraType.PENALTY
-                }
-                val fours = batsmanBalls.count { it.runsScored == 4 }
-                val sixes = batsmanBalls.count { it.runsScored == 6 }
-                val sr = if (ballsFaced > 0) (runs.toDouble() / ballsFaced) * 100.0 else 0.0
-
-                val dismissalEvent = batsmanBalls.firstOrNull { it.isWicket } ?: balls.firstOrNull {
-                    it.isWicket && it.dismissedPlayerName == name
-                }
-                val dismissal = when {
-                    dismissalEvent != null -> dismissalEvent.wicketType.name.replace("_", " ")
-                    name == inn.strikerName || name == inn.nonStrikerName -> "Not Out"
-                    else -> "Out"
-                }
-
-                list.add(
-                    BatsmanStat(
-                        name = name,
-                        runs = runs,
-                        ballsFaced = ballsFaced,
-                        fours = fours,
-                        sixes = sixes,
-                        strikeRate = sr,
-                        dismissalInfo = dismissal
-                    )
+            return ScorecardCalculator.battingLines(inn, selectedInningsBallEvents).map { line ->
+                BatsmanStat(
+                    name = line.name,
+                    runs = line.runs,
+                    ballsFaced = line.balls,
+                    fours = line.fours,
+                    sixes = line.sixes,
+                    strikeRate = line.strikeRate,
+                    dismissalInfo = line.dismissal
                 )
             }
-            return list
         }
 
+    /** Run-outs are no longer credited to the bowler as wickets. */
     val bowlerStats: List<BowlerStat>
-        get() {
-            val balls = selectedInningsBallEvents
-            if (balls.isEmpty()) return emptyList()
-
-            val grouped = balls.groupBy { it.bowlerName }
-            val list = mutableListOf<BowlerStat>()
-
-            for ((bowlerName, bBalls) in grouped) {
-                val legalBalls = bBalls.count {
-                    it.extraType != ExtraType.WIDE && it.extraType != ExtraType.NO_BALL && it.extraType != ExtraType.PENALTY
-                }
-                val overs = legalBalls / 6
-                val remBalls = legalBalls % 6
-                val oversStr = "$overs.$remBalls"
-
-                val runsConceded = bBalls.sumOf { ball ->
-                    when (ball.extraType) {
-                        ExtraType.NONE, ExtraType.WIDE, ExtraType.NO_BALL -> ball.runsScored + ball.extraRuns
-                        ExtraType.BYE, ExtraType.LEG_BYE, ExtraType.PENALTY -> 0
-                    }
-                }
-                val wickets = bBalls.count { it.isWicket }
-                val econ = if (legalBalls > 0) runsConceded.toDouble() / (legalBalls / 6.0) else 0.0
-
-                val maidens = bBalls.groupBy { it.overNumber }.count { (_, overB) ->
-                    val overLegal = overB.count {
-                        it.extraType != ExtraType.WIDE && it.extraType != ExtraType.NO_BALL && it.extraType != ExtraType.PENALTY
-                    }
-                    val overRuns = overB.sumOf { it.runsScored + it.extraRuns }
-                    overLegal >= 6 && overRuns == 0
-                }
-
-                list.add(
-                    BowlerStat(
-                        name = bowlerName,
-                        oversBowled = oversStr,
-                        maidens = maidens,
-                        runsConceded = runsConceded,
-                        wickets = wickets,
-                        economy = econ
-                    )
-                )
-            }
-            return list
+        get() = ScorecardCalculator.bowlingLines(selectedInningsBallEvents).map { line ->
+            BowlerStat(
+                name = line.name,
+                oversBowled = line.overs,
+                maidens = line.maidens,
+                runsConceded = line.runs,
+                wickets = line.wickets,
+                economy = line.economy
+            )
         }
 
     val oversDisplay: String
@@ -800,18 +735,22 @@ class ScoringViewModel(
         wicketType: WicketType,
         runsCompleted: Int = 0,
         newBatsmanName: String = "",
-        dismissedEnd: DismissedEnd = DismissedEnd.STRIKER
+        dismissedEnd: DismissedEnd = DismissedEnd.STRIKER,
+        incomingAtStrikerEnd: Boolean = true
     ) {
         RecentPlayersStore.addName(appContext, newBatsmanName)
         refreshRecentPlayerNames()
+        // Only a run-out can dismiss the non-striker; every other mode is always the striker.
+        val end = if (wicketType == WicketType.RUN_OUT) dismissedEnd else DismissedEnd.STRIKER
         applyDelivery(
-            runs = runsCompleted,
+            runs = if (wicketType == WicketType.RUN_OUT) runsCompleted else 0,
             extraType = ExtraType.NONE,
             extraRuns = 0,
             wicketType = wicketType,
             isWicket = true,
             incomingBatsmanName = newBatsmanName,
-            dismissedEnd = dismissedEnd
+            dismissedEnd = end,
+            incomingAtStrikerEnd = if (wicketType == WicketType.RUN_OUT) incomingAtStrikerEnd else true
         )
     }
 
@@ -901,7 +840,8 @@ class ScoringViewModel(
         wicketType: WicketType,
         isWicket: Boolean,
         incomingBatsmanName: String = "",
-        dismissedEnd: DismissedEnd = DismissedEnd.STRIKER
+        dismissedEnd: DismissedEnd = DismissedEnd.STRIKER,
+        incomingAtStrikerEnd: Boolean = true
     ) {
         viewModelScope.launch {
             // Always read fresh from DB — never rely on stale UI state
@@ -968,20 +908,21 @@ class ScoringViewModel(
             val newWickets = innings.wickets + if (isWicket) 1 else 0
 
             if (isWicket) {
-                // Which end the incoming batsman replaces — usually the striker, but on a
-                // run-out it can be the non-striker instead (swap icon in the Wicket dialog).
-                when (dismissedEnd) {
-                    DismissedEnd.STRIKER -> {
-                        strikerNum = nextBatsmanNum
-                        strikerName = incomingBatsmanName.ifBlank { "Batsman $nextBatsmanNum" }
-                        nextBatsmanNum += 1
-                    }
-                    DismissedEnd.NON_STRIKER -> {
-                        nonStrikerNum = nextBatsmanNum
-                        nonStrikerName = incomingBatsmanName.ifBlank { "Batsman $nextBatsmanNum" }
-                        nextBatsmanNum += 1
-                    }
-                }
+                // Run-out fix: the dismissed batsman is picked by name in the Wicket dialog
+                // ([dismissedEnd] = their role when this ball was bowled), and the scorer
+                // chooses which end the new batsman comes in at — see CreasePositions.
+                val after = CreasePositions.afterWicket(
+                    before = CreasePositions.Crease(strikerName, strikerNum, nonStrikerName, nonStrikerNum),
+                    dismissedEnd = dismissedEnd,
+                    incomingName = incomingBatsmanName.trim().ifBlank { "Batsman $nextBatsmanNum" },
+                    incomingNumber = nextBatsmanNum,
+                    incomingAtStrikerEnd = incomingAtStrikerEnd
+                )
+                strikerName = after.strikerName
+                strikerNum = after.strikerNumber
+                nonStrikerName = after.nonStrikerName
+                nonStrikerNum = after.nonStrikerNumber
+                nextBatsmanNum += 1
             } else if (runs % 2 == 1 && extraType != ExtraType.PENALTY) {
                 val tempNum = strikerNum; strikerNum = nonStrikerNum; nonStrikerNum = tempNum
                 val tempName = strikerName; strikerName = nonStrikerName; nonStrikerName = tempName

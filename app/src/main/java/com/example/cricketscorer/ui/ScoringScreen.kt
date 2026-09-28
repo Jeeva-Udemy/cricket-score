@@ -23,7 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.QrCode
-import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,6 +64,8 @@ import com.example.cricketscorer.data.BallEventEntity
 import com.example.cricketscorer.model.DismissedEnd
 import com.example.cricketscorer.model.ExtraType
 import com.example.cricketscorer.model.WicketType
+import com.example.cricketscorer.stats.CreasePositions
+import com.example.cricketscorer.stats.ScorecardCalculator
 import com.example.cricketscorer.viewmodel.ScoringViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,7 +74,8 @@ fun ScoringScreen(
     viewModel: ScoringViewModel,
     matchId: Long,
     inningsId: Long,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onOpenDashboard: (matchId: Long) -> Unit = {}
 ) {
     LaunchedEffect(matchId, inningsId) {
         viewModel.loadMatch(matchId, inningsId)
@@ -190,6 +193,12 @@ fun ScoringScreen(
             navigationIcon = {
                 IconButton(onClick = onNavigateBack) {
                     Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+            actions = {
+                // Match Dashboard: one-image summary of the whole match to share on WhatsApp.
+                IconButton(onClick = { state.match?.let { onOpenDashboard(it.matchId) } }) {
+                    Icon(imageVector = Icons.Default.Dashboard, contentDescription = "Match dashboard")
                 }
             }
         )
@@ -354,10 +363,11 @@ fun ScoringScreen(
         WicketDialog(
             strikerName = innings.strikerName,
             nonStrikerName = innings.nonStrikerName,
+            isLastBallOfOver = innings.ballsThisOver == 5,
             availableIncomingBatsmen = state.availableIncomingBatsmen,
             onDismiss = { showWicketDialog = false },
-            onConfirm = { wicketType, runsCompleted, newBatsmanName, dismissedEnd ->
-                viewModel.recordWicket(wicketType, runsCompleted, newBatsmanName, dismissedEnd)
+            onConfirm = { wicketType, runsCompleted, newBatsmanName, dismissedEnd, incomingAtStrikerEnd ->
+                viewModel.recordWicket(wicketType, runsCompleted, newBatsmanName, dismissedEnd, incomingAtStrikerEnd)
                 showWicketDialog = false
             }
         )
@@ -765,7 +775,12 @@ private fun OversTabContent(state: com.example.cricketscorer.viewmodel.ScoringUi
                     Divider()
                     summary.balls.forEach { ball ->
                         val outcomeLabel = when {
-                            ball.isWicket -> "Wicket (${ball.wicketType.name})"
+                            ball.isWicket -> {
+                                val out = ScorecardCalculator.dismissedName(ball)
+                                val how = ball.wicketType.name.replace("_", " ").lowercase()
+                                val extra = if (ball.wicketType == WicketType.RUN_OUT && ball.runsScored > 0) " +${ball.runsScored}" else ""
+                                "Wicket: $out ($how)$extra"
+                            }
                             ball.extraType == ExtraType.WIDE -> "Wide (+${ball.runsScored + ball.extraRuns} runs)"
                             ball.extraType == ExtraType.NO_BALL -> "No Ball (+${ball.runsScored + ball.extraRuns} runs)"
                             ball.extraType == ExtraType.BYE -> "Bye (${ball.runsScored} runs)"
@@ -1168,69 +1183,116 @@ private fun SelectOpeningPlayersDialog(
     )
 }
 
+/**
+ * Run-out fix: for a run-out the scorer now explicitly taps WHICH batsman is out (both names
+ * are shown — nothing is pre-selected, so it can't silently default to the striker), how many
+ * runs were completed, and which end the new batsman comes in at. A live "Next ball: X on
+ * strike" line shows the result before confirming.
+ */
 @Composable
 private fun WicketDialog(
     strikerName: String,
     nonStrikerName: String,
+    isLastBallOfOver: Boolean,
     availableIncomingBatsmen: List<String>,
     onDismiss: () -> Unit,
-    onConfirm: (WicketType, Int, String, DismissedEnd) -> Unit
+    onConfirm: (WicketType, Int, String, DismissedEnd, Boolean) -> Unit
 ) {
     var selectedType by remember { mutableStateOf<WicketType?>(null) }
     var runsCompleted by remember { mutableStateOf(0) }
     // req: no default "Batsman N" placeholder — the incoming batsman must be picked
     // from the dropdown or typed in before the wicket can be confirmed.
     var newBatsmanName by remember { mutableStateOf("") }
-    var dismissedEnd by remember { mutableStateOf(DismissedEnd.STRIKER) }
+    // Run-out only: null until the scorer taps a name.
+    var runOutEnd by remember { mutableStateOf<DismissedEnd?>(null) }
+    // Run-out only: null = use the default for the chosen batsman/runs.
+    var incomingAtStrikerEndOverride by remember { mutableStateOf<Boolean?>(null) }
     // req #4: selecting the incoming batsman highlights Confirm and closes the keyboard
     val incomingBatsmanFocusRequester = remember { FocusRequester() }
     val confirmButtonFocusRequester = remember { FocusRequester() }
+
+    val isRunOut = selectedType == WicketType.RUN_OUT
+    val dismissedEnd = if (isRunOut) runOutEnd else DismissedEnd.STRIKER
+    val incomingAtStrikerEnd = incomingAtStrikerEndOverride
+        ?: CreasePositions.defaultIncomingAtStrikerEnd(isRunOut, dismissedEnd ?: DismissedEnd.STRIKER, runsCompleted)
+    val incomingLabel = newBatsmanName.trim().ifBlank { "New batsman" }
+    val survivorName = if (dismissedEnd == DismissedEnd.NON_STRIKER) strikerName else nonStrikerName
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("How was the batsman out?") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
                 val types = listOf(
                     WicketType.BOWLED, WicketType.CAUGHT, WicketType.LBW,
                     WicketType.RUN_OUT, WicketType.STUMPED, WicketType.HIT_WICKET
                 )
                 types.forEach { type ->
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        RadioButton(selected = selectedType == type, onClick = { selectedType = type })
+                        RadioButton(selected = selectedType == type, onClick = {
+                            selectedType = type
+                            if (type != WicketType.RUN_OUT) {
+                                runOutEnd = null
+                                runsCompleted = 0
+                                incomingAtStrikerEndOverride = null
+                            }
+                        })
                         Text(type.name.replace("_", " "))
                     }
                 }
-                if (selectedType == WicketType.RUN_OUT) {
-                    Text("Runs completed before the run-out:")
+                if (isRunOut) {
+                    Divider()
+                    Text("Which batsman is run out?", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    listOf(
+                        DismissedEnd.STRIKER to "$strikerName (striker)",
+                        DismissedEnd.NON_STRIKER to "$nonStrikerName (non-striker)"
+                    ).forEach { (end, label) ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            RadioButton(selected = runOutEnd == end, onClick = {
+                                runOutEnd = end
+                                incomingAtStrikerEndOverride = null
+                            })
+                            Text(label, fontWeight = if (runOutEnd == end) FontWeight.SemiBold else FontWeight.Normal)
+                        }
+                    }
+
+                    Text("Runs completed before the run-out:", fontSize = 13.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(0, 1, 2, 3).forEach { r ->
                             FilterChip(
                                 selected = runsCompleted == r,
-                                onClick = { runsCompleted = r },
+                                onClick = {
+                                    runsCompleted = r
+                                    incomingAtStrikerEndOverride = null
+                                },
                                 label = { Text(r.toString()) }
                             )
                         }
                     }
+                    Text(
+                        "e.g. they ran 3 and the non-striker was out going for the 3rd → pick the non-striker and 2 runs.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                    Spacer(Modifier.height(4.dp))
-                    Text("Which batsman is out?", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        val outName = if (dismissedEnd == DismissedEnd.STRIKER) strikerName else nonStrikerName
-                        Text(
-                            "$outName ${if (dismissedEnd == DismissedEnd.STRIKER) "(Striker)" else "(Non-Striker)"}",
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = {
-                            dismissedEnd = if (dismissedEnd == DismissedEnd.STRIKER) DismissedEnd.NON_STRIKER else DismissedEnd.STRIKER
-                        }) {
-                            Icon(Icons.Default.SwapVert, contentDescription = "Swap which batsman is out")
+                    if (runOutEnd != null) {
+                        Text("New batsman comes in at:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(
+                                selected = incomingAtStrikerEnd,
+                                onClick = { incomingAtStrikerEndOverride = true },
+                                label = { Text("Striker's end") }
+                            )
+                            FilterChip(
+                                selected = !incomingAtStrikerEnd,
+                                onClick = { incomingAtStrikerEndOverride = false },
+                                label = { Text("Non-striker's end") }
+                            )
                         }
                     }
-                } else {
-                    // For every other dismissal type, it's always the batsman facing the ball.
-                    LaunchedEffect(selectedType) { dismissedEnd = DismissedEnd.STRIKER }
                 }
                 Spacer(Modifier.height(4.dp))
                 PlayerPickerField(
@@ -1241,12 +1303,37 @@ private fun WicketDialog(
                     focusRequester = incomingBatsmanFocusRequester,
                     nextFocusRequester = confirmButtonFocusRequester
                 )
+                if (selectedType != null && dismissedEnd != null) {
+                    val outName = if (dismissedEnd == DismissedEnd.STRIKER) strikerName else nonStrikerName
+                    // The over-end swap happens after the wicket, so the batsman at the
+                    // non-striker's end faces the next ball when this was the 6th ball.
+                    val atStrikerEnd = if (incomingAtStrikerEnd) incomingLabel else survivorName
+                    val atOtherEnd = if (incomingAtStrikerEnd) survivorName else incomingLabel
+                    val nextOnStrike = if (isLastBallOfOver) atOtherEnd else atStrikerEnd
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text("Out: $outName", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text(
+                                "Next ball: $nextOnStrike on strike" + if (isLastBallOfOver) " (new over)" else "",
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { selectedType?.let { onConfirm(it, runsCompleted, newBatsmanName, dismissedEnd) } },
-                enabled = selectedType != null && newBatsmanName.isNotBlank(),
+                onClick = {
+                    val type = selectedType ?: return@TextButton
+                    val end = dismissedEnd ?: return@TextButton
+                    onConfirm(type, runsCompleted, newBatsmanName, end, incomingAtStrikerEnd)
+                },
+                enabled = selectedType != null && dismissedEnd != null && newBatsmanName.isNotBlank(),
                 modifier = Modifier.focusRequester(confirmButtonFocusRequester)
             ) { Text("Confirm") }
         },

@@ -13,6 +13,8 @@ import com.example.cricketscorer.data.BackupStatusStore
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.stats.PlayerStatsCalculator
+import com.example.cricketscorer.backup.ShareUtils
+import com.example.cricketscorer.data.RecentPlayersStore
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
@@ -21,11 +23,28 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import android.net.Uri
 
 /** What the pending Google sign-in was for, so we know what to do once it completes. Null
  *  (see [HomeViewModel.pendingAction]) means the user just tapped "Connect Google Account" with
  *  no specific follow-up action — see [HomeViewModel.onSignInResult]. */
 private enum class PendingBackupAction { BACKUP, RESYNC, DELETE }
+
+/** Share Data (send matches/squads to a teammate's phone, and import theirs). */
+sealed class ShareDataUiState {
+    object Idle : ShareDataUiState()
+    object Working : ShareDataUiState()
+    /** A file was opened and parsed — waiting for the user to confirm the import. */
+    data class ImportPreview(val snapshot: BackupSnapshot) : ShareDataUiState() {
+        val matchCount get() = snapshot.matches.size
+        val squadCount get() = snapshot.squads.size
+        val playerCount get() = snapshot.players.size
+    }
+    data class Done(val message: String) : ShareDataUiState()
+    data class Error(val message: String) : ShareDataUiState()
+}
 
 sealed class BackupUiState {
     object Idle : BackupUiState()
@@ -199,7 +218,82 @@ class HomeViewModel(
     suspend fun playerOfTheMatch(match: MatchEntity): PlayerStatsCalculator.PlayerAward? {
         if (!match.isCompleted) return null
         val snapshot = repository.getSnapshotForMatch(match.matchId)
-        return PlayerStatsCalculator.computePlayerOfTheMatch(match, snapshot.innings, snapshot.ballEvents)
+        return PlayerStatsCalculator.computePlayerOfTheMatch(match, snapshot.innings, snapshot.ballEvents, repository.getPlayerMerges())
+    }
+
+    // ---------- Share Data (teammate onboarding) ----------
+    // A teammate who installs the app fresh has no squads or matches. "Share Data" writes a
+    // file they can receive on WhatsApp and import — merged into whatever they already have,
+    // never replacing it (unlike Drive Resync, which is for restoring YOUR OWN backup).
+
+    private val _shareState = MutableStateFlow<ShareDataUiState>(ShareDataUiState.Idle)
+    val shareState: StateFlow<ShareDataUiState> = _shareState.asStateFlow()
+
+    /** Builds the share file for [scope] (or just [matchIds] when given). Returns the file's
+     *  content:// Uri plus a caption, or null when there's nothing to share. */
+    suspend fun buildShareFile(scope: BackupDataScope, matchIds: Collection<Long>? = null): Pair<Uri, String>? {
+        _shareState.value = ShareDataUiState.Working
+        return try {
+            val snapshot = if (matchIds != null) repository.getSnapshotForMatches(matchIds)
+            else repository.getFullBackupSnapshot(scope)
+            if (snapshot.matches.isEmpty() && snapshot.squads.isEmpty()) {
+                _shareState.value = ShareDataUiState.Error("Nothing to share yet — add a team or score a match first.")
+                return null
+            }
+            val uri = withContext(Dispatchers.IO) {
+                ShareUtils.saveText(appContext, BackupSerializer.toJson(snapshot), "Wickt_data_${ShareUtils.timestamp()}.json")
+            }
+            val caption = "Wickt cricket data: ${snapshot.matches.size} match(es), ${snapshot.squads.size} team(s). " +
+                "Open this file with the Wickt app (or Home → Share Data → Import) to add it."
+            _shareState.value = ShareDataUiState.Idle
+            uri to caption
+        } catch (e: Exception) {
+            _shareState.value = ShareDataUiState.Error("Couldn't create the share file: ${e.message}")
+            null
+        }
+    }
+
+    /** Reads a shared file (picked with Import, or opened from WhatsApp) and shows a preview. */
+    fun openImportFile(uri: Uri) {
+        _shareState.value = ShareDataUiState.Working
+        viewModelScope.launch {
+            try {
+                val json = withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() }
+                } ?: throw IllegalStateException("The file couldn't be opened.")
+                val snapshot = withContext(Dispatchers.Default) { BackupSerializer.fromJson(json) }
+                _shareState.value = if (snapshot.matches.isEmpty() && snapshot.squads.isEmpty()) {
+                    ShareDataUiState.Error("That file has no matches or teams in it.")
+                } else {
+                    ShareDataUiState.ImportPreview(snapshot)
+                }
+            } catch (e: Exception) {
+                _shareState.value = ShareDataUiState.Error(
+                    "This doesn't look like a Wickt data file. Ask your teammate to send it again from Home → Share Data."
+                )
+            }
+        }
+    }
+
+    fun confirmImport(scope: BackupDataScope) {
+        val preview = _shareState.value as? ShareDataUiState.ImportPreview ?: return
+        _shareState.value = ShareDataUiState.Working
+        viewModelScope.launch {
+            try {
+                val result = repository.importSharedSnapshot(preview.snapshot, scope)
+                // Make imported player names available in the batsman/bowler dropdowns.
+                if (scope != BackupDataScope.MATCH) {
+                    RecentPlayersStore.addNames(appContext, preview.snapshot.players.map { it.name })
+                }
+                _shareState.value = ShareDataUiState.Done(result.describe())
+            } catch (e: Exception) {
+                _shareState.value = ShareDataUiState.Error("Import failed: ${e.message}")
+            }
+        }
+    }
+
+    fun dismissShareState() {
+        _shareState.value = ShareDataUiState.Idle
     }
 
     // ---------- Backup & Resync ----------
@@ -316,7 +410,7 @@ class HomeViewModel(
             val merged = when {
                 existing == null -> fresh
                 scope == BackupDataScope.SQUAD -> existing.copy(squads = fresh.squads, players = fresh.players)
-                scope == BackupDataScope.MATCH -> existing.copy(matches = fresh.matches, innings = fresh.innings, ballEvents = fresh.ballEvents)
+                scope == BackupDataScope.MATCH -> existing.copy(matches = fresh.matches, innings = fresh.innings, ballEvents = fresh.ballEvents, playerMerges = fresh.playerMerges)
                 else -> fresh
             }
             // Safety guard: this is exactly the bug that let tapping "Back Up Now" right after
