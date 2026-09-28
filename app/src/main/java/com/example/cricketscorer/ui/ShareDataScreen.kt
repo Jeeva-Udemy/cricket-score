@@ -154,7 +154,10 @@ fun ShareDataScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        RoleChip(role = state.role, loading = state.roleLoading, rootAdmin = state.isRootAdmin)
+                        // Roles are only shown to Admins; everyone else just sees names.
+                        if (state.role == TeamRole.ADMIN) {
+                            RoleChip(role = state.role, loading = state.roleLoading, rootAdmin = state.isRootAdmin)
+                        }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { showEditProfile = true }) { Text("Edit profile") }
@@ -384,7 +387,6 @@ private fun MemberRow(
                 Icon(Icons.Default.Delete, contentDescription = "Remove", tint = MaterialTheme.colorScheme.error)
             }
         } else {
-            Text(member.role.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 8.dp))
         }
     }
 }

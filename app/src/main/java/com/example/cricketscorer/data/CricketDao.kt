@@ -170,9 +170,8 @@ interface CricketDao {
     suspend fun restorePlayerMerge(merge: PlayerMergeEntity)
 
     @Transaction
-    suspend fun insertPlayerMerges(merges: List<PlayerMergeEntity>) {
-        merges.forEach { insertPlayerMerge(it) }
-    }
+    suspend fun insertPlayerMerges(merges: List<PlayerMergeEntity>): List<Long> =
+        merges.map { insertPlayerMerge(it) }
 
     // ---------- Restore (Google Drive Resync) ----------
     // These re-insert rows with their ORIGINAL primary keys (REPLACE on conflict) so that

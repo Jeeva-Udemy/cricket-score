@@ -177,7 +177,7 @@ class CricketRepository(private val dao: CricketDao) {
     // ---------- Player merges ("Merge players") ----------
     fun observePlayerMerges(): Flow<List<PlayerMergeEntity>> = dao.observeAllPlayerMerges()
     suspend fun getPlayerMerges(): List<PlayerMergeEntity> = dao.getAllPlayerMerges()
-    suspend fun addPlayerMerges(merges: List<PlayerMergeEntity>) = dao.insertPlayerMerges(merges)
+    suspend fun addPlayerMerges(merges: List<PlayerMergeEntity>): List<Long> = dao.insertPlayerMerges(merges)
     suspend fun deletePlayerMerges(mergeIds: List<Long>) {
         if (mergeIds.isNotEmpty()) dao.deletePlayerMerges(mergeIds)
     }

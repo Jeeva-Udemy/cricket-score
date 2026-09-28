@@ -81,6 +81,12 @@ object UserProfileStore {
     fun isAdminSession(c: Context): Boolean = prefs(c).getBoolean(KEY_ADMIN_SESSION, false)
     fun setAdminSession(c: Context, on: Boolean) = prefs(c).edit().putBoolean(KEY_ADMIN_SESSION, on).apply()
 
+    // ---- last known Team Sharing role (so Admin/Manager-only features work offline) ----
+
+    fun cachedRole(c: Context): TeamRole? = TeamRole.parse(prefs(c).getString("cached_role", null))
+    fun setCachedRole(c: Context, role: TeamRole?) =
+        prefs(c).edit().putString("cached_role", role?.name).apply()
+
     // ---- sync bookkeeping ----
 
     fun lastTeamSync(c: Context): Long? = prefs(c).getLong(KEY_LAST_TEAM_SYNC, 0L).takeIf { it > 0 }

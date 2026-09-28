@@ -50,7 +50,10 @@ class TeamViewModel(
                 _state.value = _state.value.copy(members = list)
                 // Role changes made by an admin on another phone apply here straight away.
                 val mine = list.firstOrNull { it.mobile == _state.value.profile.mobile }
-                if (!_state.value.isRootAdmin) _state.value = _state.value.copy(role = mine?.role, roleLoading = false)
+                if (!_state.value.isRootAdmin) {
+                    _state.value = _state.value.copy(role = mine?.role, roleLoading = false)
+                    UserProfileStore.setCachedRole(appContext, mine?.role)
+                }
             }
         }.getOrNull()
     }

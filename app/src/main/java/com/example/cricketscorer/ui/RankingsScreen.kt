@@ -47,6 +47,9 @@ fun RankingsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val mergeMode by viewModel.mergeMode.collectAsState()
     val selectedKeys by viewModel.selectedKeys.collectAsState()
+    val canMerge by viewModel.canMerge.collectAsState()
+    // Collected so "Revert merge" buttons refresh as soon as merges change.
+    val merges by viewModel.merges.collectAsState()
     var tabIndex by remember { mutableIntStateOf(0) }
 
     val batters = remember(players) {
@@ -95,7 +98,10 @@ fun RankingsScreen(
                             player = player,
                             mergeMode = mergeMode,
                             isSelected = player.playerKey in selectedKeys,
-                            onToggle = { viewModel.toggleSelection(it) }
+                            onToggle = { viewModel.toggleSelection(it) },
+                            onRevert = if (canMerge && merges.isNotEmpty() && viewModel.isMergedPlayer(player)) {
+                                { viewModel.revertPlayer(player) }
+                            } else null
                         ) {
                             if (tabIndex == 0) {
                                 BatterRankingRow(rank = index + 1, player = player)

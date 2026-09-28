@@ -37,7 +37,11 @@ class TeamSyncManager(
     suspend fun effectiveRole(): TeamRole? {
         if (UserProfileStore.isAdminSession(context)) return TeamRole.ADMIN
         val mobile = UserProfileStore.get(context).mobile
-        return runCatching { TeamHub.getMember(mobile)?.role }.getOrNull()
+        if (mobile.isBlank()) return null
+        // Online: ask the team list and remember the answer. Offline: use the last answer.
+        return runCatching { TeamHub.getMember(mobile)?.role }
+            .onSuccess { UserProfileStore.setCachedRole(context, it) }
+            .getOrElse { UserProfileStore.cachedRole(context) }
     }
 
     private fun publisherId(): String =

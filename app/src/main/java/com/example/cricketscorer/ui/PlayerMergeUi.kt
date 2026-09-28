@@ -17,7 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -32,8 +32,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -58,7 +60,8 @@ import com.example.cricketscorer.viewmodel.PlayerStatsViewModel
  *  - tap the merge icon (or long-press any player) to enter merge mode
  *  - tick two or more entries that are really the same person (e.g. "Jeeva" / "Jeevaa")
  *  - tap Merge, pick the correct name, confirm — stats combine immediately
- *  - the history icon lists merges, each of which can be undone
+ *  - Undo right after merging, "Revert merge" on a merged player, or Revert (top bar)
+ *    to split merges back apart. Merge / Revert are for Admin and Manager only.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,14 +76,21 @@ fun PlayerMergeScaffold(
     val merges by viewModel.merges.collectAsState()
     val players by viewModel.players.collectAsState()
     val message by viewModel.message.collectAsState()
+    val canMerge by viewModel.canMerge.collectAsState()
     var showMergeDialog by remember { mutableStateOf(false) }
     var showMergedList by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(message) {
-        message?.let {
-            snackbarHostState.showSnackbar(it)
+        message?.let { msg ->
             viewModel.clearMessage()
+            // Right after a merge: offer a one-tap Undo.
+            val result = snackbarHostState.showSnackbar(
+                message = msg.text,
+                actionLabel = if (msg.undoMergeIds.isNotEmpty()) "Undo" else null,
+                duration = if (msg.undoMergeIds.isNotEmpty()) SnackbarDuration.Long else SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) viewModel.undoMerges(msg.undoMergeIds)
         }
     }
 
@@ -114,12 +124,14 @@ fun PlayerMergeScaffold(
                         }
                     },
                     actions = {
-                        if (merges.isNotEmpty()) {
-                            IconButton(onClick = { showMergedList = true }) {
-                                Icon(Icons.Default.History, contentDescription = "Merged players")
+                        // Merge and Revert: Admin and Manager only.
+                        if (canMerge && merges.isNotEmpty()) {
+                            TextButton(onClick = { showMergedList = true }) {
+                                Icon(Icons.Default.Restore, contentDescription = null)
+                                Text(" Revert")
                             }
                         }
-                        if (players.size >= 2) {
+                        if (canMerge && players.size >= 2) {
                             IconButton(onClick = { viewModel.setMergeMode(true) }) {
                                 Icon(Icons.Default.MergeType, contentDescription = "Merge players")
                             }
@@ -160,6 +172,10 @@ fun PlayerMergeScaffold(
         MergedPlayersDialog(
             merges = merges,
             onUndo = { viewModel.undoMerges(listOf(it.mergeId)) },
+            onUndoAll = {
+                viewModel.revertAll()
+                showMergedList = false
+            },
             onDismiss = { showMergedList = false }
         )
     }
@@ -203,6 +219,8 @@ fun SelectablePlayerCard(
     mergeMode: Boolean,
     isSelected: Boolean,
     onToggle: (String) -> Unit,
+    /** Non-null = this player is a merge result and the viewer may revert it. */
+    onRevert: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     Card(
@@ -224,7 +242,18 @@ fun SelectablePlayerCard(
                     modifier = Modifier.padding(start = 4.dp)
                 )
             }
-            Column(modifier = Modifier.weight(1f)) { content() }
+            Column(modifier = Modifier.weight(1f)) {
+                content()
+                if (!mergeMode && onRevert != null) {
+                    TextButton(
+                        onClick = onRevert,
+                        modifier = Modifier.align(Alignment.End).padding(end = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Restore, contentDescription = null)
+                        Text(" Revert merge")
+                    }
+                }
+            }
         }
     }
 }
@@ -323,16 +352,30 @@ private fun MergePlayersDialog(
 private fun MergedPlayersDialog(
     merges: List<PlayerMergeEntity>,
     onUndo: (PlayerMergeEntity) -> Unit,
+    onUndoAll: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var confirmAll by remember { mutableStateOf(false) }
+    val revertAllButton: (@Composable () -> Unit)? = if (merges.size > 1) {
+        {
+            TextButton(onClick = { confirmAll = true }) {
+                Text("Revert all", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    } else null
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Merged players") },
+        title = { Text("Revert merges") },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
             ) {
+                Text(
+                    "Revert splits a merged name back into its own player with its own stats.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 if (merges.isEmpty()) Text("No merges yet.")
                 merges.sortedByDescending { it.createdAt }.forEach { m ->
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -344,11 +387,21 @@ private fun MergedPlayersDialog(
                                 Text(teams, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        TextButton(onClick = { onUndo(m) }) { Text("Undo") }
+                        TextButton(onClick = { onUndo(m) }) { Text("Revert") }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = revertAllButton
     )
+    if (confirmAll) {
+        AlertDialog(
+            onDismissRequest = { confirmAll = false },
+            title = { Text("Revert all merges?") },
+            text = { Text("Every merged player goes back to separate entries with separate stats.") },
+            confirmButton = { Button(onClick = { confirmAll = false; onUndoAll() }) { Text("Revert all") } },
+            dismissButton = { TextButton(onClick = { confirmAll = false }) { Text("Cancel") } }
+        )
+    }
 }
