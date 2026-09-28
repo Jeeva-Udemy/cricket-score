@@ -13,8 +13,11 @@ android {
         applicationId = "com.example.cricketscorer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // App updates: every CI build gets a higher versionCode (the GitHub Actions run
+        // number), so the in-app "new version available" check and Firebase App Distribution
+        // can tell builds apart. Local builds without the env var stay at 1.
+        versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
+        versionName = "1.0." + (System.getenv("VERSION_CODE") ?: "0")
     }
 
     // Google Sign-In's DEVELOPER_ERROR (Backup & Resync, req #1) was caused by this: every
@@ -43,6 +46,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true // BuildConfig.VERSION_CODE for the update check
     }
 
     composeOptions {

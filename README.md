@@ -151,3 +151,46 @@ much larger project)
   The teammate taps the file and opens it with Wickt, or uses Import from File; data is added
   to theirs (no deletion, duplicates skipped). Match History selection mode can also share just
   the selected matches.
+
+## Team Sharing (Share Data page)
+Home → **Share Data**.
+- **First launch** asks for name, mobile number and Gmail (can be skipped, and edited later
+  under Share Data → Edit profile).
+- **Admin login**: username `root`, password `root` (stored as SHA-256 in
+  `data/UserProfileStore.kt` — change both hashes before sharing the app widely).
+- **Roles by mobile number**
+  - Admin — all options: add/remove members, change roles, upload data.
+  - Manager — add members (as Manager or User) and upload data.
+  - User — read only; receives the team's data.
+- **Adding people**: *Add* → *Pick from Contacts* (no contacts permission needed) or type the
+  number. When that person installs the app and enters the same number, the team's matches
+  and squads download automatically (on app open, or *Sync now*).
+- Admin/Manager phones upload their matches (only the ones that changed) and squads. Imports
+  merge into local data; nothing is deleted on anyone's phone.
+- Firestore collections: `team_members`, `team_matches`, `team_squads` — deploy the updated
+  `firestore.rules`.
+
+**Team Sharing security:** there is no SMS/OTP verification, so a phone is trusted to be the
+number typed into it, and the root/root login ships inside the app. Fine for a friendly local
+team; for anything more, switch to Firebase Phone Auth + rules that check roles.
+
+## Automatic app updates (Firebase App Distribution)
+The email entered in the app is saved to Firestore `tester_requests`. On every push to `main`,
+the GitHub workflow builds the APK, adds all new emails as testers (group `team`), uploads
+the build to App Distribution (Firebase emails every tester a one-tap install link / notifies
+the Firebase App Tester app), and writes `app_release/latest` so the app shows a
+"New version available → Update" card on Home.
+
+One-time setup (in the Firebase project owned by your account):
+1. Firebase console → **App Distribution** → Get started (for the Android app).
+2. Project settings → **General**: copy the Android **App ID** (`1:…:android:…`).
+3. Project settings → **Service accounts** → Generate new private key (JSON). In Google Cloud
+   IAM give that service account the roles **Firebase App Distribution Admin** and
+   **Cloud Datastore User**.
+4. GitHub repo → Settings → Secrets and variables → Actions → add
+   `FIREBASE_APP_ID` (step 2) and `FIREBASE_SERVICE_ACCOUNT` (the whole JSON from step 3).
+5. Deploy `firestore.rules`.
+
+Each tester accepts the first invitation email once (signing in with that Google account);
+after that every new build reaches them automatically. Android never allows silent installs,
+so the final "Install" tap is always the tester's.

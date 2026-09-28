@@ -15,6 +15,10 @@ import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.example.cricketscorer.backup.ShareUtils
 import com.example.cricketscorer.data.RecentPlayersStore
+import com.example.cricketscorer.data.UserProfileStore
+import com.example.cricketscorer.sync.TeamHub
+import com.example.cricketscorer.sync.TeamSyncManager
+import com.example.cricketscorer.BuildConfig
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
@@ -124,6 +128,63 @@ class HomeViewModel(
 
     init {
         observeMatches()
+    }
+
+    // ---------- First launch: name / mobile / email ----------
+    // Mobile number = how Team Sharing recognises this phone; email = registers the person
+    // as a Firebase App Distribution tester so new versions reach them automatically.
+
+    private val _needsOnboarding = MutableStateFlow(!UserProfileStore.isOnboarded(appContext))
+    val needsOnboarding: StateFlow<Boolean> = _needsOnboarding.asStateFlow()
+
+    fun completeOnboarding(name: String, mobile: String, email: String) {
+        UserProfileStore.save(appContext, name, mobile, email)
+        _needsOnboarding.value = false
+        viewModelScope.launch {
+            if (email.isNotBlank()) {
+                runCatching {
+                    TeamHub.requestTesterAccess(email, name, UserProfileStore.normalizeMobile(mobile))
+                }
+            }
+            autoTeamSync(force = true)
+        }
+    }
+
+    fun skipOnboarding() {
+        UserProfileStore.markOnboarded(appContext)
+        _needsOnboarding.value = false
+    }
+
+    // ---------- Team Sharing: automatic sync when the app opens ----------
+
+    private val _teamSyncMessage = MutableStateFlow<String?>(null)
+    val teamSyncMessage: StateFlow<String?> = _teamSyncMessage.asStateFlow()
+    fun clearTeamSyncMessage() { _teamSyncMessage.value = null }
+
+    private suspend fun autoTeamSync(force: Boolean = false) {
+        if (UserProfileStore.get(appContext).mobile.isBlank() && !UserProfileStore.isAdminSession(appContext)) return
+        val last = UserProfileStore.lastTeamSync(appContext)
+        // Home is recreated on every back-navigation — don't hit the network each time.
+        if (!force && last != null && System.currentTimeMillis() - last < 2 * 60_000L) return
+        runCatching {
+            val manager = TeamSyncManager(repository, appContext)
+            val role = manager.effectiveRole() ?: return
+            // First sync on a new phone downloads everything the team has shared.
+            val result = manager.sync(role, fullPull = last == null)
+            if (result.added > 0 || result.updated > 0) _teamSyncMessage.value = "Team data synced: " + result.describe()
+        }
+    }
+
+    // ---------- New version available (Firebase App Distribution) ----------
+
+    private val _availableUpdate = MutableStateFlow<TeamHub.Release?>(null)
+    val availableUpdate: StateFlow<TeamHub.Release?> = _availableUpdate.asStateFlow()
+    fun dismissUpdate() { _availableUpdate.value = null }
+
+    private suspend fun checkForAppUpdate() {
+        runCatching { TeamHub.latestRelease() }.getOrNull()?.let { release ->
+            if (release.versionCode > BuildConfig.VERSION_CODE) _availableUpdate.value = release
+        }
     }
 
     private fun observeMatches() {
@@ -573,6 +634,15 @@ class HomeViewModel(
                         it.message ?: "Couldn't restore that version. Check your connection and try again."
                     )
                 }
+        }
+    }
+
+    // Declared LAST on purpose: Kotlin runs init blocks/property initializers top to bottom,
+    // so this must come after every property it touches (see the class doc above).
+    init {
+        viewModelScope.launch {
+            autoTeamSync()
+            checkForAppUpdate()
         }
     }
 }

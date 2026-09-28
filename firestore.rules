@@ -14,6 +14,27 @@ service cloud.firestore {
     match /rooms/{roomCode} {
       allow read, write: if true;
     }
+    // Team Sharing (Share Data page). Same no-login model as Rooms: the app itself enforces
+    // Admin / Manager / User by mobile number. See README "Team Sharing security".
+    match /team_members/{mobile} {
+      allow read, write: if true;
+    }
+    match /team_matches/{matchKey} {
+      allow read, write: if true;
+    }
+    match /team_squads/{publisher} {
+      allow read, write: if true;
+    }
+    // App updates: phones may only ADD their email to the tester queue (never read the list);
+    // the CI build (service account, bypasses rules) reads it and writes app_release.
+    match /tester_requests/{email} {
+      allow create, update: if true;
+      allow read, delete: if false;
+    }
+    match /app_release/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

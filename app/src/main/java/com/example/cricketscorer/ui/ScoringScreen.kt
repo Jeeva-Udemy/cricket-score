@@ -1296,7 +1296,7 @@ private fun WicketDialog(
                 }
                 Spacer(Modifier.height(4.dp))
                 PlayerPickerField(
-                    label = "Incoming Batsman",
+                    label = "Batsman",
                     value = newBatsmanName,
                     onValueChange = { newBatsmanName = it },
                     availablePlayerNames = availableIncomingBatsmen,

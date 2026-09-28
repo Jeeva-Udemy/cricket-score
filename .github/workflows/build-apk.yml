@@ -2,6 +2,11 @@ name: Build APK
 
 # Runs on every push to main and can also be triggered manually from the
 # Actions tab ("Run workflow" button).
+#
+# If the FIREBASE_APP_ID and FIREBASE_SERVICE_ACCOUNT secrets are set (see README →
+# "Automatic app updates"), every build is also sent to Firebase App Distribution: everyone
+# who entered their email in the app is added as a tester and gets the new version by
+# email / the Firebase App Tester app.
 on:
   push:
     branches: [ "main" ]
@@ -10,6 +15,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Every build gets a higher versionCode so phones can tell a new build is available.
+      VERSION_CODE: ${{ github.run_number }}
+      FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout repository
@@ -35,3 +45,36 @@ jobs:
         with:
           name: cricket-scorer-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Set up Node (Firebase App Distribution)
+        if: env.FIREBASE_APP_ID != '' && env.FIREBASE_SERVICE_ACCOUNT != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Send build to testers (Firebase App Distribution)
+        if: env.FIREBASE_APP_ID != '' && env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          RELEASE_NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          set -e
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-sa.json"
+          PROJECT_ID=$(node -e "console.log(require(process.env.GOOGLE_APPLICATION_CREDENTIALS).project_id)")
+          npm install --no-save --no-audit --no-fund firebase-admin@12 firebase-tools@13
+
+          # 1. Emails phones registered in the app -> testers in the "team" group.
+          node scripts/app-distribution.mjs pending > testers.txt
+          echo "New testers: $(wc -l < testers.txt)"
+          npx firebase appdistribution:group:create "Team" team --project "$PROJECT_ID" || true
+          if [ -s testers.txt ]; then
+            npx firebase appdistribution:testers:add --file testers.txt --group-alias team --project "$PROJECT_ID"
+          fi
+
+          # 2. Upload this build; Firebase emails/notifies every tester in the group.
+          npx firebase appdistribution:distribute app/build/outputs/apk/debug/app-debug.apk \
+            --app "$FIREBASE_APP_ID" --groups team --project "$PROJECT_ID" \
+            --release-notes "Build ${VERSION_CODE}: ${RELEASE_NOTES:-update}"
+
+          # 3. Mark testers added + tell the app a new version exists.
+          node scripts/app-distribution.mjs done testers.txt

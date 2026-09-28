@@ -28,6 +28,7 @@ import com.example.cricketscorer.ui.RankingsScreen
 import com.example.cricketscorer.ui.RoomDetailScreen
 import com.example.cricketscorer.ui.RoomsScreen
 import com.example.cricketscorer.ui.ScoringScreen
+import com.example.cricketscorer.ui.ShareDataScreen
 import com.example.cricketscorer.ui.SquadScreen
 import com.example.cricketscorer.viewmodel.HomeViewModel
 import com.example.cricketscorer.viewmodel.MatchDashboardViewModel
@@ -36,6 +37,7 @@ import com.example.cricketscorer.viewmodel.PlayerStatsViewModel
 import com.example.cricketscorer.viewmodel.RoomsViewModel
 import com.example.cricketscorer.viewmodel.ScoringViewModel
 import com.example.cricketscorer.viewmodel.SquadViewModel
+import com.example.cricketscorer.viewmodel.TeamViewModel
 import com.example.cricketscorer.viewmodel.ViewModelFactory
 
 class MainActivity : ComponentActivity() {
@@ -111,7 +113,8 @@ fun CricketNavHost(
                 onMatchHistory = { navController.navigate("matchHistory") },
                 onOpenRooms = { navController.navigate("rooms") },
                 externalImportUri = pendingImportUri,
-                onExternalImportConsumed = onImportConsumed
+                onExternalImportConsumed = onImportConsumed,
+                onOpenShareData = { navController.navigate("share") }
             )
         }
 
@@ -161,6 +164,16 @@ fun CricketNavHost(
             MatchDashboardScreen(
                 viewModel = dashboardViewModel,
                 matchId = matchId,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable("share") {
+            val teamViewModel: TeamViewModel = viewModel(factory = factory)
+            val homeViewModel: HomeViewModel = viewModel(factory = factory)
+            ShareDataScreen(
+                teamViewModel = teamViewModel,
+                homeViewModel = homeViewModel,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

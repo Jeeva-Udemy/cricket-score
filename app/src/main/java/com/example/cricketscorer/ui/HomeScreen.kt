@@ -85,23 +85,19 @@ fun HomeScreen(
     onOpenRooms: () -> Unit = {},
     /** A Wickt data file opened from outside the app (e.g. tapped in WhatsApp). */
     externalImportUri: android.net.Uri? = null,
-    onExternalImportConsumed: () -> Unit = {}
+    onExternalImportConsumed: () -> Unit = {},
+    onOpenShareData: () -> Unit = {}
 ) {
     val backupState by viewModel.backupState.collectAsState()
     val lastBackupAt by viewModel.lastBackupAt.collectAsState()
     val backupScope by viewModel.backupScope.collectAsState()
     val resyncScope by viewModel.resyncScope.collectAsState()
     var showBackupDialog by remember { mutableStateOf(false) }
-    var showShareDialog by remember { mutableStateOf(false) }
     val shareState by viewModel.shareState.collectAsState()
-    var shareScope by remember { mutableStateOf(BackupDataScope.BOTH) }
+    val needsOnboarding by viewModel.needsOnboarding.collectAsState()
+    val availableUpdate by viewModel.availableUpdate.collectAsState()
+    val teamSyncMessage by viewModel.teamSyncMessage.collectAsState()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    // Share Data: pick a file received from a teammate (WhatsApp saves documents to the phone).
-    val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri -> if (uri != null) viewModel.openImportFile(uri) }
 
     LaunchedEffect(externalImportUri) {
         externalImportUri?.let {
@@ -145,6 +141,34 @@ fun HomeScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // App update available (Firebase App Distribution build newer than this one).
+            availableUpdate?.let { release ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4D6))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("New version ${release.versionName} available", fontWeight = FontWeight.Bold)
+                        if (release.notes.isNotBlank()) {
+                            Text(release.notes, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { openUpdate(context, release.url) }) { Text("Update") }
+                            TextButton(onClick = { viewModel.dismissUpdate() }) { Text("Later") }
+                        }
+                    }
+                }
+            }
+            teamSyncMessage?.let { msg ->
+                Card(
+                    onClick = { viewModel.clearTeamSyncMessage() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFDCEFD9))
+                ) {
+                    Text(msg + "  (tap to dismiss)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
+                }
+            }
+
             // ---- Action grid (req #2: restyled to match the reference screenshot) ----
             // req: "Resume Match" removed — Match History already covers getting back into an
             // in-progress match. Backup & Resync and Room are grid tiles here too now, so
@@ -164,7 +188,7 @@ fun HomeScreen(
                 HomeAction("Backup & Resync", Icons.Default.CloudSync, Color(0xFFFBE9D0), { showBackupDialog = true }),
                 HomeAction("Room", Icons.Default.GroupAdd, Color(0xFFDCE8FB), onOpenRooms),
                 // Share matches + squads with a teammate who just installed the app.
-                HomeAction("Share Data", Icons.Default.Share, Color(0xFFDCEFD9), { showShareDialog = true })
+                HomeAction("Share Data", Icons.Default.Share, Color(0xFFDCEFD9), onOpenShareData)
             )
 
             // req #1: a plain chunked Column/Row grid instead of a height-constrained
@@ -231,29 +255,15 @@ fun HomeScreen(
             }
         )
     }
-    if (showShareDialog) {
-        ShareDataDialog(
-            scope = shareScope,
-            onScopeChange = { shareScope = it },
-            busy = shareState is ShareDataUiState.Working,
-            onShare = { preferWhatsApp ->
-                scope.launch {
-                    val file = viewModel.buildShareFile(shareScope) ?: return@launch
-                    ShareUtils.shareFile(
-                        context = context,
-                        uri = file.first,
-                        mimeType = "application/json",
-                        message = file.second,
-                        chooserTitle = "Share Wickt data",
-                        preferWhatsApp = preferWhatsApp
-                    )
-                }
-            },
-            onImport = {
-                showShareDialog = false
-                importLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*"))
-            },
-            onDismiss = { showShareDialog = false }
+    if (needsOnboarding) {
+        ProfileDialog(
+            title = "Welcome to Wickt",
+            intro = "Enter your mobile number so your team can share matches and squads with you, " +
+                "and your Gmail to get new versions of the app automatically.",
+            initial = com.example.cricketscorer.data.UserProfileStore.get(context),
+            dismissLabel = "Skip for now",
+            onSave = { n, m, e -> viewModel.completeOnboarding(n, m, e) },
+            onDismiss = { viewModel.skipOnboarding() }
         )
     }
 
@@ -261,63 +271,6 @@ fun HomeScreen(
         state = shareState,
         onConfirmImport = { viewModel.confirmImport(it) },
         onDismiss = { viewModel.dismissShareState() }
-    )
-}
-
-/**
- * Share Data: a teammate who installs the app fresh starts with nothing. This sends your teams
- * and/or match history as a small file (e.g. over WhatsApp); they open it with Wickt, or use
- * Import here, and it's ADDED to whatever is already on their phone.
- */
-@Composable
-private fun ShareDataDialog(
-    scope: BackupDataScope,
-    onScopeChange: (BackupDataScope) -> Unit,
-    busy: Boolean,
-    onShare: (preferWhatsApp: Boolean) -> Unit,
-    onImport: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Share Data") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Send your teams (squads) and match history to a teammate. They open the " +
-                        "file with Wickt and it gets added to their app — nothing on their phone is deleted.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                BackupScopeDropdown(label = "What to share", selected = scope, enabled = !busy, onSelect = onScopeChange)
-                Button(
-                    onClick = { onShare(true) },
-                    enabled = !busy,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Send on WhatsApp") }
-                OutlinedButton(onClick = { onShare(false) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    Text("Send with another app")
-                }
-                if (busy) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.height(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Working…", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                androidx.compose.material3.Divider()
-                Text("Got a file from a teammate?", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Tap it in WhatsApp and choose Wickt, or pick it here (WhatsApp saves received documents to your phone).",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedButton(onClick = onImport, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    Text("Import from File")
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }
 
@@ -730,5 +683,13 @@ internal fun BackupScopeDropdown(
                 DropdownItemDivider()
             }
         }
+    }
+}
+
+/** Opens the Firebase App Tester app if installed (one-tap update), else the tester web page. */
+private fun openUpdate(context: android.content.Context, url: String) {
+    val tester = context.packageManager.getLaunchIntentForPackage("dev.firebase.appdistribution")
+    runCatching {
+        context.startActivity(tester ?: android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
     }
 }

@@ -27,6 +27,8 @@ class ViewModelFactory(
                 PlayerStatsViewModel(repository, appContext) as T
             modelClass.isAssignableFrom(MatchDashboardViewModel::class.java) ->
                 MatchDashboardViewModel(repository, appContext) as T
+            modelClass.isAssignableFrom(TeamViewModel::class.java) ->
+                TeamViewModel(repository, appContext) as T
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
     }
