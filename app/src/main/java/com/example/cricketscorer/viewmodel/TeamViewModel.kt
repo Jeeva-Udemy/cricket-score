@@ -148,9 +148,19 @@ class TeamViewModel(
                         lastSync = UserProfileStore.lastTeamSync(appContext)
                     )
                 }
-                .onFailure {
-                    _state.value = _state.value.copy(busy = false, error = "Sync failed — check your internet connection. (${it.message})")
-                }
+                .onFailure { _state.value = _state.value.copy(busy = false, error = describeError(it, "Sync failed")) }
+        }
+    }
+
+    /** PERMISSION_DENIED means the Firestore rules in the Firebase console haven't been updated
+     *  with firestore.rules from this project — not a network problem. */
+    private fun describeError(e: Throwable, prefix: String): String {
+        val msg = e.message ?: ""
+        return if (msg.contains("PERMISSION_DENIED")) {
+            "$prefix: Firebase is blocking Team Sharing. Publish the rules from firestore.rules in " +
+                "Firebase console → Firestore Database → Rules."
+        } else {
+            "$prefix — check your internet connection. ($msg)"
         }
     }
 
@@ -170,9 +180,7 @@ class TeamViewModel(
         viewModelScope.launch {
             runCatching { block() }
                 .onSuccess { _state.value = _state.value.copy(busy = false, message = success) }
-                .onFailure {
-                    _state.value = _state.value.copy(busy = false, error = "Couldn't save — check your internet connection. (${it.message})")
-                }
+                .onFailure { _state.value = _state.value.copy(busy = false, error = describeError(it, "Couldn't save")) }
         }
     }
 }
