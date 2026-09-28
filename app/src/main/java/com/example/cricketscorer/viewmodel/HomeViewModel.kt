@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cricketscorer.backup.BackupRevision
+import com.example.cricketscorer.backup.AppSettingsBackup
 import com.example.cricketscorer.backup.BackupSerializer
 import com.example.cricketscorer.backup.DriveBackupManager
 import com.example.cricketscorer.data.BackupDataScope
@@ -197,6 +198,14 @@ class HomeViewModel(
                 scheduleAutoBackupIfChanged(list)
             }
         }
+        // Full-app backup: squad/player and player-merge changes (Rankings / Player Stats)
+        // should trigger an automatic backup too, not only match changes.
+        viewModelScope.launch {
+            repository.observeAllSquads().collect { scheduleAutoBackupIfChanged() }
+        }
+        viewModelScope.launch {
+            repository.observePlayerMerges().collect { scheduleAutoBackupIfChanged() }
+        }
     }
 
     // ---------- Automatic backup (req #2) ----------
@@ -215,26 +224,43 @@ class HomeViewModel(
      * every single recreation and either miss a real change made just before recreation, or
      * spam re-uploads of data that hasn't actually changed.
      */
-    private fun scheduleAutoBackupIfChanged(list: List<MatchEntity>) {
+    private fun scheduleAutoBackupIfChanged(@Suppress("UNUSED_PARAMETER") list: List<MatchEntity> = emptyList()) {
         val account = driveBackupManager.getLastSignedInAccount() ?: return
-        val fingerprint = matchesFingerprint(list)
-        if (fingerprint == BackupStatusStore.getLastBackedUpFingerprint(appContext)) return
         autoBackupJob?.cancel()
         autoBackupJob = viewModelScope.launch {
-            val snapshot = repository.getFullBackupSnapshot()
-            val freshFingerprint = matchesFingerprint(snapshot.matches)
+            // Full app data: every table + rooms/profile/remembered names (see buildFullBackup).
+            val snapshot = buildFullBackup()
+            // Never let an automatic backup from an empty phone (fresh install, before Resync)
+            // overwrite a real backup on Drive.
+            if (isEffectivelyEmpty(snapshot)) return@launch
+            val fingerprint = fullFingerprint(snapshot)
+            if (fingerprint == BackupStatusStore.getLastBackedUpFingerprint(appContext)) return@launch
             driveBackupManager.uploadBackup(account, BackupSerializer.toJson(snapshot))
                 .onSuccess {
                     val now = System.currentTimeMillis()
-                    BackupStatusStore.setLastBackedUpFingerprint(appContext, freshFingerprint)
+                    BackupStatusStore.setLastBackedUpFingerprint(appContext, fingerprint)
                     BackupStatusStore.setLastBackupAt(appContext, now)
                     _lastBackupAt.value = now
                 }
             // Silent on failure — this was never a user-initiated action, so there's no dialog
             // open to show an error in. The fingerprint was never updated, so the very next
-            // match-list change (or the next app open) simply tries again.
+            // change (or the next app open) simply tries again.
         }
     }
+
+    /**
+     * Backup & Resync covers the ENTIRE app: matches, innings, balls, squads, players, player
+     * merges (Rankings / Player Stats), plus everything stored outside the database — rooms
+     * list, current room, profile, remembered player names (see AppSettingsBackup).
+     */
+    private suspend fun buildFullBackup(scope: BackupDataScope = BackupDataScope.BOTH): BackupSnapshot {
+        val snapshot = repository.getFullBackupSnapshot(scope)
+        return if (scope == BackupDataScope.BOTH) snapshot.copy(appSettings = AppSettingsBackup.export(appContext)) else snapshot
+    }
+
+    /** Content fingerprint of a full backup (data classes -> structural hash). */
+    private fun fullFingerprint(s: BackupSnapshot): Int =
+        java.util.Objects.hash(s.matches, s.innings, s.ballEvents, s.squads, s.players, s.playerMerges, s.appSettings)
 
     private fun matchesFingerprint(list: List<MatchEntity>): Int =
         list.sortedBy { it.matchId }.fold(0) { acc, m ->
@@ -467,7 +493,7 @@ class HomeViewModel(
             // rest of the remote file is carried over untouched.
             val existing = driveBackupManager.downloadBackup(account).getOrNull()
                 ?.let { runCatching { BackupSerializer.fromJson(it) }.getOrNull() }
-            val fresh = repository.getFullBackupSnapshot(scope)
+            val fresh = buildFullBackup(scope)
             val merged = when {
                 existing == null -> fresh
                 scope == BackupDataScope.SQUAD -> existing.copy(squads = fresh.squads, players = fresh.players)
@@ -497,8 +523,8 @@ class HomeViewModel(
                     // since they were last backed up" — only meaningful to update when this
                     // backup actually covered matches. A Squad-only backup says nothing about
                     // whether match data is current, so leave that fingerprint alone.
-                    if (scope != BackupDataScope.SQUAD) {
-                        BackupStatusStore.setLastBackedUpFingerprint(appContext, matchesFingerprint(fresh.matches))
+                    if (scope == BackupDataScope.BOTH) {
+                        BackupStatusStore.setLastBackedUpFingerprint(appContext, fullFingerprint(fresh))
                     }
                     _backupState.value = BackupUiState.Success(describeBackupSuccess(scope, fresh))
                 }
@@ -516,7 +542,7 @@ class HomeViewModel(
     private fun describeBackupSuccess(scope: BackupDataScope, snapshot: BackupSnapshot): String = when (scope) {
         BackupDataScope.SQUAD -> "Backed up ${snapshot.squads.size} squad(s) to Google Drive."
         BackupDataScope.MATCH -> "Backed up ${snapshot.matches.size} match(es) to Google Drive."
-        BackupDataScope.BOTH -> "Backed up ${snapshot.matches.size} match(es) and ${snapshot.squads.size} squad(s) to Google Drive."
+        BackupDataScope.BOTH -> "Backed up all app data (${snapshot.matches.size} match(es), ${snapshot.squads.size} squad(s), rooms, player merges and settings) to Google Drive."
     }
 
     /** req #3: "an option to delete the existing backup in the gmail drive." */
@@ -567,6 +593,7 @@ class HomeViewModel(
                         // "Match only" resync must never clear local squads just because the
                         // downloaded file happens to also contain some, and vice versa.
                         repository.restoreFromBackup(snapshot, scope)
+                        if (scope == BackupDataScope.BOTH) restoreAppSettings(snapshot)
                         _backupState.value = BackupUiState.Success(describeResyncSuccess(scope, snapshot))
                     }
                 }
@@ -581,7 +608,14 @@ class HomeViewModel(
     private fun describeResyncSuccess(scope: BackupDataScope, snapshot: BackupSnapshot): String = when (scope) {
         BackupDataScope.SQUAD -> "Restored ${snapshot.squads.size} squad(s) from Google Drive."
         BackupDataScope.MATCH -> "Restored ${snapshot.matches.size} match(es) from Google Drive."
-        BackupDataScope.BOTH -> "Restored ${snapshot.matches.size} match(es) and ${snapshot.squads.size} squad(s) from Google Drive."
+        BackupDataScope.BOTH -> "Restored all app data (${snapshot.matches.size} match(es), ${snapshot.squads.size} squad(s), rooms, player merges and settings) from Google Drive."
+    }
+
+    /** Rooms list, current room, profile, remembered names... from a full backup. */
+    private fun restoreAppSettings(snapshot: BackupSnapshot) {
+        snapshot.appSettings?.let { AppSettingsBackup.restore(appContext, it) }
+        // The profile may have just come back — don't show the first-launch prompt again.
+        if (UserProfileStore.isOnboarded(appContext)) _needsOnboarding.value = false
     }
 
     fun dismissBackupStatus() {
@@ -624,6 +658,7 @@ class HomeViewModel(
                 .mapCatching { BackupSerializer.fromJson(it) }
                 .onSuccess { snapshot ->
                     repository.restoreFromBackup(snapshot, BackupDataScope.BOTH)
+                    restoreAppSettings(snapshot)
                     _backupState.value = BackupUiState.Success(
                         "Restored ${snapshot.matches.size} match(es) and ${snapshot.squads.size} " +
                             "squad(s) from an earlier backup."

@@ -415,9 +415,9 @@ private fun BackupResyncDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!isSignedIn) {
                     Text(
-                        "Connect a Google account once — after that, your match history and " +
-                            "saved teams back up to Google Drive automatically, just like a " +
-                            "WhatsApp chat backup. No manual setup after that.",
+                        "Connect a Google account once — after that, ALL your app data (matches, " +
+                            "teams, rooms, player merges, profile and settings) backs up to " +
+                            "Google Drive automatically, just like a WhatsApp chat backup.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Button(onClick = onConnectAccount, enabled = !inProgress, modifier = Modifier.fillMaxWidth()) {
@@ -640,7 +640,7 @@ private fun RevisionPickerDialog(
 private fun BackupDataScope.displayName(): String = when (this) {
     BackupDataScope.SQUAD -> "Squad"
     BackupDataScope.MATCH -> "Match"
-    BackupDataScope.BOTH -> "Both"
+    BackupDataScope.BOTH -> "Everything"
 }
 
 /** req #3: the Squad/Match/Both picker shared by both the Backup and Resync buttons above. */

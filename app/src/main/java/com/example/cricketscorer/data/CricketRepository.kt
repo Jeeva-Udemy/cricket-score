@@ -205,7 +205,7 @@ class CricketRepository(private val dao: CricketDao) {
             snapshot.ballEvents.forEach { dao.restoreBallEvent(it) }
             // Older backups have no merges at all — only replace local merges when the file
             // actually carries some, so restoring an old backup doesn't silently undo them.
-            if (snapshot.playerMerges.isNotEmpty()) {
+            if (snapshot.playerMerges.isNotEmpty() || snapshot.appSettings != null) {
                 dao.clearAllPlayerMerges()
                 snapshot.playerMerges.forEach { dao.restorePlayerMerge(it) }
             }
@@ -222,7 +222,10 @@ data class BackupSnapshot(
     val players: List<PlayerEntity>,
     /** "Merge players" rows. Defaults to empty so every existing caller (and Cloud Sync's
      *  per-match snapshots, which never carry merges) is unaffected. */
-    val playerMerges: List<PlayerMergeEntity> = emptyList()
+    val playerMerges: List<PlayerMergeEntity> = emptyList(),
+    /** Backup & Resync only: everything outside the database (rooms list, profile, remembered
+     *  names, ...) as JSON — see backup/AppSettingsBackup. Null everywhere else. */
+    val appSettings: String? = null
 )
 
 /** Outcome of importing a teammate's shared data file, shown to the user afterwards. */

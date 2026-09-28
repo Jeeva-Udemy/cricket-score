@@ -194,3 +194,11 @@ One-time setup (in the Firebase project owned by your account):
 Each tester accepts the first invitation email once (signing in with that Google account);
 after that every new build reaches them automatically. Android never allows silent installs,
 so the final "Install" tap is always the tester's.
+
+## Backup & Resync = entire app
+Choosing **Everything** (the default) backs up and restores the whole app: matches, innings,
+balls, squads, players, player merges (Rankings / Player Stats), plus the Rooms list and the
+current room, which team this phone scores for in shared matches, remembered player names,
+profile (name / mobile / email) and the phone's sync id (see `backup/AppSettingsBackup.kt`).
+Not included on purpose: the root-admin login. Automatic backups now also run when squads or
+player merges change, and never upload from an empty phone over an existing backup.

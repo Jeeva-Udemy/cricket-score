@@ -34,6 +34,7 @@ object BackupSerializer {
         root.put("squads", JSONArray(snapshot.squads.map { it.toJson() }))
         root.put("players", JSONArray(snapshot.players.map { it.toJson() }))
         root.put("playerMerges", JSONArray(snapshot.playerMerges.map { it.toJson() }))
+        snapshot.appSettings?.let { root.put("appSettings", JSONObject(it)) }
         return root.toString()
     }
 
@@ -45,7 +46,8 @@ object BackupSerializer {
         val squads = root.optJSONArray("squads")?.toObjectList()?.map { it.toSquadEntity() } ?: emptyList()
         val players = root.optJSONArray("players")?.toObjectList()?.map { it.toPlayerEntity() } ?: emptyList()
         val merges = root.optJSONArray("playerMerges")?.toObjectList()?.map { it.toPlayerMergeEntity() } ?: emptyList()
-        return BackupSnapshot(matches, innings, ballEvents, squads, players, merges)
+        val appSettings = root.optJSONObject("appSettings")?.toString()
+        return BackupSnapshot(matches, innings, ballEvents, squads, players, merges, appSettings)
     }
 
     private fun JSONArray.toObjectList(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
