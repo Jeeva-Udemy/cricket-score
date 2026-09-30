@@ -723,6 +723,17 @@ class ScoringViewModel(
         applyDelivery(runs = runs, extraType = ExtraType.NONE, extraRuns = 0, wicketType = WicketType.NONE, isWicket = false)
     }
 
+    /**
+     * "OT" button: one legal delivery where [totalRuns] (runs run + overthrows, 1..10) are all
+     * credited to the striker — not to extras. Strike changes on an odd total, like any runs.
+     */
+    fun recordOverthrow(totalRuns: Int) {
+        applyDelivery(
+            runs = totalRuns, extraType = ExtraType.NONE, extraRuns = 0,
+            wicketType = WicketType.NONE, isWicket = false, isOverthrow = true
+        )
+    }
+
     fun recordExtra(extraType: ExtraType, additionalRuns: Int) {
         applyDelivery(runs = additionalRuns, extraType = extraType, extraRuns = 1, wicketType = WicketType.NONE, isWicket = false)
     }
@@ -841,7 +852,8 @@ class ScoringViewModel(
         isWicket: Boolean,
         incomingBatsmanName: String = "",
         dismissedEnd: DismissedEnd = DismissedEnd.STRIKER,
-        incomingAtStrikerEnd: Boolean = true
+        incomingAtStrikerEnd: Boolean = true,
+        isOverthrow: Boolean = false
     ) {
         viewModelScope.launch {
             // Always read fresh from DB — never rely on stale UI state
@@ -887,7 +899,8 @@ class ScoringViewModel(
                 preNonStrikerName = innings.nonStrikerName,
                 preNextBatsmanNumber = innings.nextBatsmanNumber,
                 preIsCompleted = innings.isCompleted,
-                bowlerName = innings.currentBowlerName
+                bowlerName = innings.currentBowlerName,
+                isOverthrow = isOverthrow
             )
             // Not written yet — recorded atomically together with the resulting score below
             // via repository.recordBall(), so a single tap always produces exactly one DB

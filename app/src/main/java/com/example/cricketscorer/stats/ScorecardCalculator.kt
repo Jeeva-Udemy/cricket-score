@@ -78,8 +78,8 @@ object ScorecardCalculator {
             val runs = faced.filter { it.extraType == ExtraType.NONE || it.extraType == ExtraType.NO_BALL }
                 .sumOf { it.runsScored }
             val ballsFaced = faced.count { it.extraType != ExtraType.WIDE && it.extraType != ExtraType.PENALTY }
-            val fours = faced.count { (it.extraType == ExtraType.NONE || it.extraType == ExtraType.NO_BALL) && it.runsScored == 4 }
-            val sixes = faced.count { (it.extraType == ExtraType.NONE || it.extraType == ExtraType.NO_BALL) && it.runsScored == 6 }
+            val fours = faced.count { (it.extraType == ExtraType.NONE || it.extraType == ExtraType.NO_BALL) && !it.isOverthrow && it.runsScored == 4 }
+            val sixes = faced.count { (it.extraType == ExtraType.NONE || it.extraType == ExtraType.NO_BALL) && !it.isOverthrow && it.runsScored == 6 }
             val outBall = balls.firstOrNull { it.isWicket && dismissedName(it) == name }
             BattingLine(
                 name = name,

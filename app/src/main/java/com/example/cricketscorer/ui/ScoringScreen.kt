@@ -85,6 +85,7 @@ fun ScoringScreen(
     var showWicketDialog by remember { mutableStateOf(false) }
     var showExtraDialogFor by remember { mutableStateOf<ExtraType?>(null) }
     var showPenaltyDialog by remember { mutableStateOf(false) }
+    var showOverthrowDialog by remember { mutableStateOf(false) }
     var showEditBatsmenDialog by remember { mutableStateOf(false) }
     var showEditBowlerDialog by remember { mutableStateOf(false) }
     // True when the bowler dialog was opened automatically after an over (mandatory,
@@ -269,6 +270,7 @@ fun ScoringScreen(
                 onWicketClick = { if (state.canEditScore) showWicketDialog = true },
                 onExtraClick = { if (state.canEditScore) showExtraDialogFor = it },
                 onPenaltyClick = { if (state.canEditScore) showPenaltyDialog = true },
+                onOverthrowClick = { if (state.canEditScore) showOverthrowDialog = true },
                 onCompleteInningsClick = { if (state.canEditScore) showCompleteInningsDialog = true },
                 onSetTargetClick = { if (state.canEditScore) showSetTargetDialog = true },
                 onStartSuperOverClick = { showSuperOverTeamDialog = true }
@@ -320,6 +322,16 @@ fun ScoringScreen(
             onConfirm = { runs ->
                 viewModel.recordExtra(extraType, runs)
                 showExtraDialogFor = null
+            }
+        )
+    }
+
+    if (showOverthrowDialog) {
+        OverthrowDialog(
+            onDismiss = { showOverthrowDialog = false },
+            onConfirm = { runs ->
+                viewModel.recordOverthrow(runs)
+                showOverthrowDialog = false
             }
         )
     }
@@ -436,6 +448,7 @@ private fun LiveScoreTabContent(
     onWicketClick: () -> Unit,
     onExtraClick: (ExtraType) -> Unit,
     onPenaltyClick: () -> Unit,
+    onOverthrowClick: () -> Unit,
     onCompleteInningsClick: () -> Unit,
     onSetTargetClick: () -> Unit,
     onStartSuperOverClick: () -> Unit
@@ -632,11 +645,16 @@ private fun LiveScoreTabContent(
                 Text("Extras", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
                     listOf("WD" to ExtraType.WIDE, "NB" to ExtraType.NO_BALL,
-                           "BYE" to ExtraType.BYE, "LB" to ExtraType.LEG_BYE).forEach { (label, type) ->
+                           "BYE" to ExtraType.BYE).forEach { (label, type) ->
                         OutlinedButton(onClick = { onExtraClick(type) }, modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)) {
                             Text(label, fontSize = 11.sp, maxLines = 1)
                         }
+                    }
+                    // Overthrow (replaces LB): runs go to the batter, not extras.
+                    OutlinedButton(onClick = onOverthrowClick, modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)) {
+                        Text("OT", fontSize = 11.sp, maxLines = 1)
                     }
                     OutlinedButton(onClick = onPenaltyClick, modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)) {
@@ -786,6 +804,7 @@ private fun OversTabContent(state: com.example.cricketscorer.viewmodel.ScoringUi
                             ball.extraType == ExtraType.BYE -> "Bye (${ball.runsScored} runs)"
                             ball.extraType == ExtraType.LEG_BYE -> "Leg Bye (${ball.runsScored} runs)"
                             ball.extraType == ExtraType.PENALTY -> "Penalty (+${ball.extraRuns} runs)"
+                            ball.isOverthrow -> "${ball.runsScored} run(s) incl. overthrow"
                             else -> "${ball.runsScored} run(s)"
                         }
                         val batsman = ball.strikerName.ifBlank { "Batsman ${ball.strikerBatsmanNumber}" }
@@ -813,6 +832,7 @@ private fun BallChip(ball: BallEventEntity) {
         ball.extraType == ExtraType.BYE -> "B${ball.runsScored}"
         ball.extraType == ExtraType.LEG_BYE -> "LB${ball.runsScored}"
         ball.extraType == ExtraType.PENALTY -> "PEN+${ball.extraRuns}"
+        ball.isOverthrow -> "${ball.runsScored}OT"
         else -> ball.runsScored.toString()
     }
     Surface(
@@ -844,6 +864,39 @@ private fun ExtraRunsDialog(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 items(listOf(0, 1, 2, 3, 4, 5, 6, 7)) { r ->
                     OutlinedButton(onClick = { onConfirm(r) }) { Text(r.toString()) }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/** "OT": total runs on the ball including overthrows (1..10), all credited to the batter. */
+@Composable
+private fun OverthrowDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("OT (Overthrow) — total runs?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Runs run + overthrow runs. All go to the batter (not extras); it isn't counted as a 4 or 6.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                listOf(1..5, 6..10).forEach { range ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                        range.forEach { r ->
+                            OutlinedButton(
+                                onClick = { onConfirm(r) },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(0.dp)
+                            ) { Text(r.toString()) }
+                        }
+                    }
                 }
             }
         },

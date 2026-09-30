@@ -46,6 +46,9 @@ data class BallEventEntity(
      *  strikerName, but on a run-out it may be the non-striker instead. */
     val dismissedPlayerName: String = "",
     val bowlerName: String = "Bowler 1",
+    /** "OT" button: runs on this ball include overthrows. All runs go to the batter (not
+     *  extras), but the ball never counts as a 4 or 6 even if the total is 4 or 6. */
+    val isOverthrow: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
 
     // ---- Pre-ball innings snapshot, used exclusively to make Undo exact ----

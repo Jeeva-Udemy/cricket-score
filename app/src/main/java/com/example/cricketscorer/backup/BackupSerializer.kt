@@ -164,6 +164,7 @@ object BackupSerializer {
         put("strikerName", strikerName)
         put("dismissedPlayerName", dismissedPlayerName)
         put("bowlerName", bowlerName)
+        put("isOverthrow", isOverthrow)
         put("timestamp", timestamp)
         put("preTotalRuns", preTotalRuns)
         put("preWickets", preWickets)
@@ -196,6 +197,7 @@ object BackupSerializer {
         strikerName = optString("strikerName", ""),
         dismissedPlayerName = optString("dismissedPlayerName", ""),
         bowlerName = optString("bowlerName", "Bowler 1"),
+        isOverthrow = optBoolean("isOverthrow", false),
         timestamp = optLong("timestamp", System.currentTimeMillis()),
         preTotalRuns = optInt("preTotalRuns", 0),
         preWickets = optInt("preWickets", 0),

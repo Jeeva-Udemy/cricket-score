@@ -19,7 +19,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     ],
     // v7: req #3 Super Over — MatchEntity.wasSuperOver, InningsEntity.isSuperOver
     // v8: "Merge players" — new player_merges table
-    version = 8,
+    // v9: overthrows — BallEventEntity.isOverthrow
+    version = 9,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -58,6 +59,13 @@ abstract class CricketDatabase : RoomDatabase() {
             }
         }
 
+        /** v8 -> v9: one new column with a safe default; existing balls are untouched. */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE ball_events ADD COLUMN isOverthrow INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): CricketDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -65,7 +73,7 @@ abstract class CricketDatabase : RoomDatabase() {
                     CricketDatabase::class.java,
                     "cricket_scorer_db"
                 )
-                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     // Safety net for any OTHER schema drift this migration doesn't cover — the
                     // explicit migration above means a normal v6 -> v7 upgrade never hits this
                     // destructive path.

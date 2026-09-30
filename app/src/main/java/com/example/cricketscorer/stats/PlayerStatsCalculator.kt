@@ -221,8 +221,8 @@ object PlayerStatsCalculator {
                     if (b.extraType != ExtraType.WIDE && b.extraType != ExtraType.PENALTY) ballsFaced++
                     if (b.extraType == ExtraType.NONE || b.extraType == ExtraType.NO_BALL) {
                         runs += b.runsScored
-                        if (b.runsScored == 4) fours++
-                        if (b.runsScored == 6) sixes++
+                        if (b.runsScored == 4 && !b.isOverthrow) fours++
+                        if (b.runsScored == 6 && !b.isOverthrow) sixes++
                     }
                 }
                 val isOut = balls.any { it.isWicket && PlayerIdentity.clean(ScorecardCalculator.dismissedName(it)) == batter }
