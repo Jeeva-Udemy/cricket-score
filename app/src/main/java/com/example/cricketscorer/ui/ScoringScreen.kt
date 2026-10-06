@@ -119,8 +119,10 @@ fun ScoringScreen(
     // see this mandatory popup. Previously it fired on BOTH phones after every over — on the
     // device that isn't scoring, it had no squad to offer either (see req #3 fix in
     // CricketRepository.getSnapshotForMatch), so it was an unusable, unmissable dialog.
-    LaunchedEffect(innings.completedOvers, state.canEditScore) {
-        if (innings.completedOvers > 0 && innings.ballsThisOver == 0 &&
+    LaunchedEffect(innings.completedOvers, state.canEditScore, state.needsBowlerForNewOver) {
+        // Only prompt if the bowler for the new over hasn't been picked yet — otherwise
+        // re-opening this screen would ask again even though one was already selected.
+        if (state.needsBowlerForNewOver &&
             state.isCurrentInningsLive && state.canEditScore
         ) {
             isBowlerChangeMandatory = true

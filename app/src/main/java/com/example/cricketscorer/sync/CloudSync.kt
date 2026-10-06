@@ -165,8 +165,9 @@ object CloudSync {
         val inns = snapshot.innings.filter { it.matchId == match.matchId }.sortedBy { it.inningsNumber }
         val current = inns.lastOrNull { !it.isCompleted } ?: inns.lastOrNull()
         val recent = current?.let { cur ->
-            snapshot.ballEvents.filter { it.inningsId == cur.inningsId }
-                .sortedBy { it.ballId }.takeLast(8).map { ballLabel(it) }
+            // Only the over in progress (overNumber == completedOvers), not the previous over's balls.
+            snapshot.ballEvents.filter { it.inningsId == cur.inningsId && it.overNumber == cur.completedOvers }
+                .sortedBy { it.ballId }.map { ballLabel(it) }
         } ?: emptyList()
         val data = mapOf(
             "teamA" to match.teamAName,

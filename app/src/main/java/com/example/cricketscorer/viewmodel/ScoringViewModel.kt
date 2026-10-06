@@ -133,6 +133,21 @@ data class ScoringUiState(
                 inn.nonStrikerName == "Batsman 2" &&
                 inn.currentBowlerName == "Bowler 1"
         }
+    /**
+     * True while an over has just finished and the bowler for the NEXT over hasn't been chosen
+     * yet. Derived from data (not a one-shot UI flag) so leaving the scoring screen and coming
+     * back doesn't ask for the bowler again once one was picked: after an over, the innings'
+     * current bowler is still whoever bowled the last ball until a different bowler is chosen
+     * (the same bowler can't bowl two overs in a row, so a different name = already picked).
+     */
+    val needsBowlerForNewOver: Boolean
+        get() {
+            val inn = currentInnings ?: return false
+            if (inn.completedOvers <= 0 || inn.ballsThisOver != 0) return false
+            val lastBowler = selectedInningsBallEvents.maxByOrNull { it.ballId }?.bowlerName
+                ?: return false
+            return inn.currentBowlerName.isBlank() || inn.currentBowlerName == lastBowler
+        }
     val currentInnings: InningsEntity?
         get() {
             if (allInnings.isEmpty()) return null
