@@ -483,7 +483,20 @@ class ScoringViewModel(
      *  collapse genuinely-rapid double-taps, so the other device sees each ball/undo pushed
      *  out almost immediately instead of visibly lagging behind. */
     private fun scheduleCloudPush() {
-        val shareCode = _uiState.value.match?.shareCode ?: return
+        val shareCode = _uiState.value.match?.shareCode
+        if (shareCode == null) {
+            // Local (room-less) match: nothing to mirror between phones, but still show it on
+            // the Live Match tab via the small summary doc.
+            cloudPushJob?.cancel()
+            cloudPushJob = viewModelScope.launch {
+                delay(150)
+                runCatching {
+                    val snapshot = repository.getSnapshotForMatch(matchId)
+                    CloudSync.pushLiveSummaryOnly(CloudSync.localLiveCode(deviceId, matchId), snapshot, deviceId)
+                }
+            }
+            return
+        }
         if (applyingRemoteSnapshot) return
         cloudPushJob?.cancel()
         cloudPushJob = viewModelScope.launch {

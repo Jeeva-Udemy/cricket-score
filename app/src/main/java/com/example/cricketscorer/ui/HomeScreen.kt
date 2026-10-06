@@ -15,8 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.History
@@ -80,13 +81,14 @@ fun HomeScreen(
     onManageSquads: () -> Unit,
     onPlayerStats: () -> Unit = {},
     onRankings: () -> Unit = {},
-    onTournaments: () -> Unit = {},
+    onLiveMatches: () -> Unit = {},
     onMatchHistory: () -> Unit = {},
     onOpenRooms: () -> Unit = {},
     /** A Wickt data file opened from outside the app (e.g. tapped in WhatsApp). */
     externalImportUri: android.net.Uri? = null,
     onExternalImportConsumed: () -> Unit = {},
-    onOpenShareData: () -> Unit = {}
+    onOpenShareData: () -> Unit = {},
+    onOpenDashboard: () -> Unit = {}
 ) {
     val backupState by viewModel.backupState.collectAsState()
     val lastBackupAt by viewModel.lastBackupAt.collectAsState()
@@ -126,7 +128,7 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Manage your local and Tournament matches easily",
+                        text = "Manage your local and live matches easily",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -184,11 +186,13 @@ fun HomeScreen(
                 HomeAction("Match History", Icons.Default.History, Color(0xFFF6DCEF), onMatchHistory),
                 HomeAction("Player Stats", Icons.Default.Person, Color(0xFFDCF1F5), onPlayerStats),
                 HomeAction("Rankings", Icons.Default.Leaderboard, Color(0xFFDCF1F5), onRankings),
-                HomeAction("Tournaments", Icons.Default.EmojiEvents, Color(0xFFDCF1F5), onTournaments),
+                HomeAction("Live Match", Icons.Default.LiveTv, Color(0xFFFBDCDC), onLiveMatches),
                 HomeAction("Backup & Resync", Icons.Default.CloudSync, Color(0xFFFBE9D0), { showBackupDialog = true }),
                 HomeAction("Room", Icons.Default.GroupAdd, Color(0xFFDCE8FB), onOpenRooms),
                 // Share matches + squads with a teammate who just installed the app.
-                HomeAction("Share Data", Icons.Default.Share, Color(0xFFDCEFD9), onOpenShareData)
+                HomeAction("Share Data", Icons.Default.Share, Color(0xFFDCEFD9), onOpenShareData),
+                // Overall Dashboard: head-to-head, team records and Top-10 players as graphs.
+                HomeAction("Dashboard", Icons.Default.BarChart, Color(0xFFFFF0C9), onOpenDashboard)
             )
 
             // req #1: a plain chunked Column/Row grid instead of a height-constrained

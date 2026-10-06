@@ -294,6 +294,13 @@ class HomeViewModel(
 
         viewModelScope.launch {
             repository.deleteMatches(idsToDelete)
+            // Also drop any Live Match summary these (local) matches published.
+            val devId = com.example.cricketscorer.data.CloudDeviceIdStore.getDeviceId(appContext)
+            idsToDelete.forEach { id ->
+                com.example.cricketscorer.sync.CloudSync.deleteLiveSummary(
+                    com.example.cricketscorer.sync.CloudSync.localLiveCode(devId, id)
+                )
+            }
             _selectedMatchIds.value = emptySet()
         }
     }

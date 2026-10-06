@@ -16,6 +16,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.SelectAll
@@ -96,6 +98,21 @@ fun MatchHistoryScreen(
         allMatches.filter { localDateKey(it.createdAt) == utcDateKey(selectedDateMillis!!) }
     } else {
         allMatches
+    }
+
+    // Match History is grouped by the day played: only the dates are listed at first, and
+    // tapping a date expands/collapses that day's matches. Newest day first.
+    val groupedByDay = remember(matches) {
+        matches.groupBy { localDateKey(it.createdAt) }
+            .toSortedMap(compareByDescending { it })
+            .map { (key, list) -> DayGroup(key, list.sortedByDescending { it.createdAt }) }
+    }
+    var expandedDays by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // When a single date is picked via the calendar icon there is only one group — open it.
+    LaunchedEffect(selectedDateMillis) {
+        expandedDays = if (selectedDateMillis != null) {
+            groupedByDay.map { it.dateKey }.toSet()
+        } else emptySet()
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -210,28 +227,46 @@ fun MatchHistoryScreen(
                 contentPadding = PaddingValues(16.dp),
                 modifier = Modifier.fillMaxWidth().fillMaxSize()
             ) {
-                items(matches, key = { it.matchId }) { match ->
-                    val isSelected = selectedMatchIds.contains(match.matchId)
-                    MatchHistoryCard(
-                        match = match,
-                        isSelected = isSelected,
-                        isSelectionMode = isSelectionMode,
-                        onFetchPlayerOfTheMatch = { viewModel.playerOfTheMatch(match) },
-                        onOpenDashboard = { onOpenDashboard(match.matchId) },
-                        onClick = {
-                            if (isSelectionMode) {
-                                viewModel.toggleMatchSelection(match.matchId)
-                            } else {
-                                onOpenMatch(match.matchId)
+                groupedByDay.forEach { group ->
+                    val expanded = group.dateKey in expandedDays
+                    item(key = "day_${group.dateKey}") {
+                        DayHeaderCard(
+                            millis = group.matches.first().createdAt,
+                            matchCount = group.matches.size,
+                            expanded = expanded,
+                            onClick = {
+                                expandedDays = if (expanded) expandedDays - group.dateKey
+                                else expandedDays + group.dateKey
                             }
-                        },
-                        onLongClick = {
-                            viewModel.toggleMatchSelection(match.matchId)
-                        },
-                        onCheckedChange = {
-                            viewModel.toggleMatchSelection(match.matchId)
+                        )
+                    }
+                    if (expanded) {
+                        items(group.matches, key = { it.matchId }) { match ->
+                            val isSelected = selectedMatchIds.contains(match.matchId)
+                            Column(modifier = Modifier.padding(start = 12.dp)) {
+                                MatchHistoryCard(
+                                    match = match,
+                                    isSelected = isSelected,
+                                    isSelectionMode = isSelectionMode,
+                                    onFetchPlayerOfTheMatch = { viewModel.playerOfTheMatch(match) },
+                                    onOpenDashboard = { onOpenDashboard(match.matchId) },
+                                    onClick = {
+                                        if (isSelectionMode) {
+                                            viewModel.toggleMatchSelection(match.matchId)
+                                        } else {
+                                            onOpenMatch(match.matchId)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        viewModel.toggleMatchSelection(match.matchId)
+                                    },
+                                    onCheckedChange = {
+                                        viewModel.toggleMatchSelection(match.matchId)
+                                    }
+                                )
+                            }
                         }
-                    )
+                    }
                 }
             }
         }
@@ -286,6 +321,40 @@ fun MatchHistoryScreen(
             }
         ) {
             DatePicker(state = datePickerState)
+        }
+    }
+}
+
+private data class DayGroup(val dateKey: String, val matches: List<MatchEntity>)
+
+/** One tappable row per day played: date, weekday, match count and an expand/collapse arrow. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DayHeaderCard(millis: Long, matchCount: Int, expanded: Boolean, onClick: () -> Unit) {
+    val date = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(millis))
+    val weekday = SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(millis))
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.CalendarMonth, contentDescription = null)
+            Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(date, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "$weekday • $matchCount ${if (matchCount == 1) "match" else "matches"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand"
+            )
         }
     }
 }

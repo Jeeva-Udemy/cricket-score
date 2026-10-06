@@ -6,6 +6,7 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.example.cricketscorer.model.ExtraType
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 
@@ -67,6 +68,184 @@ object CloudSync {
                 FIELD_UPDATED_BY to deviceId
             )
         ).await()
+        // Live Match tab: publish a tiny public summary for every phone that has the app.
+        // Best-effort — a failure here must never break scoring/sync of the real match.
+        runCatching { publishLiveSummary(shareCode, snapshot, deviceId) }
+    }
+
+    // ---------- Live Match tab (every installed phone can see matches being played) ----------
+    // A small summary doc (no ball-by-ball payload) lives at live_scores/{roomCode}, so the
+    // Live Match list stays cheap to download. It is rewritten on every push and flagged
+    // isCompleted when the match ends; the list shows only matches that are not completed and
+    // were updated recently (see [LIVE_WINDOW_MS]).
+
+    private const val LIVE_COLLECTION = "live_scores"
+
+    /** Live-list document id for a match that is NOT in a Room (so it has no share code). */
+    fun localLiveCode(deviceId: String, matchId: Long): String = "L${deviceId.filter { it.isLetterOrDigit() }.take(8)}_$matchId"
+
+    /** Publishes a local (room-less) match to the Live Match tab: the small summary doc, plus
+     *  the full snapshot at liveMatches/{code} so viewers can open the read-only scorecard.
+     *  Best-effort: never throws. */
+    suspend fun pushLiveSummaryOnly(code: String, snapshot: BackupSnapshot, deviceId: String) {
+        runCatching {
+            matches().document(code).set(
+                mapOf(
+                    FIELD_PAYLOAD to BackupSerializer.toJson(snapshot),
+                    FIELD_UPDATED_AT to FieldValue.serverTimestamp(),
+                    FIELD_UPDATED_BY to deviceId
+                )
+            ).await()
+        }
+        runCatching { publishLiveSummary(code, snapshot, deviceId) }
+    }
+
+    /** Removes a local match's Live Match entry (summary + snapshot). Best-effort. */
+    suspend fun deleteLiveSummary(code: String) {
+        runCatching { FirebaseFirestore.getInstance().collection(LIVE_COLLECTION).document(code).delete().await() }
+        runCatching { matches().document(code).delete().await() }
+    }
+
+    /** Read-only stream of a live match's full snapshot, for the Live Match detail screen.
+     *  Unlike [listen] it does not skip this device's own writes. */
+    fun listenLiveSnapshot(
+        code: String,
+        onUpdate: (BackupSnapshot) -> Unit,
+        onError: (String) -> Unit
+    ): ListenerRegistration {
+        return matches().document(code).addSnapshotListener { snap, error ->
+            if (error != null) { onError(error.message ?: "Couldn't load match"); return@addSnapshotListener }
+            if (snap == null || !snap.exists()) { onError("This match is no longer live."); return@addSnapshotListener }
+            val payload = snap.getString(FIELD_PAYLOAD) ?: run { onError("Scorecard not available yet."); return@addSnapshotListener }
+            runCatching { BackupSerializer.fromJson(payload) }
+                .onSuccess(onUpdate)
+                .onFailure { onError("Couldn't read match data.") }
+        }
+    }
+
+    /** A match not updated for this long is treated as abandoned and hidden from Live Match. */
+    const val LIVE_WINDOW_MS = 12L * 60 * 60 * 1000
+
+    data class LiveInnings(
+        val number: Int,
+        val team: String,
+        val runs: Int,
+        val wickets: Int,
+        val overs: String,
+        val isSuperOver: Boolean
+    )
+
+    data class LiveMatchSummary(
+        val code: String,
+        val teamA: String,
+        val teamB: String,
+        val totalOvers: Int,
+        val isCompleted: Boolean,
+        val result: String?,
+        val innings: List<LiveInnings>,
+        val striker: String,
+        val nonStriker: String,
+        val bowler: String,
+        val target: Int?,
+        val recentBalls: List<String>,
+        val updatedAtMs: Long
+    )
+
+    private fun ballLabel(b: com.example.cricketscorer.data.BallEventEntity): String = when {
+        b.isWicket -> "W"
+        b.extraType == ExtraType.WIDE -> "Wd"
+        b.extraType == ExtraType.NO_BALL -> "Nb"
+        b.extraType == ExtraType.BYE -> "${b.runsScored}b"
+        b.extraType == ExtraType.LEG_BYE -> "${b.runsScored}lb"
+        else -> b.runsScored.toString()
+    }
+
+    private suspend fun publishLiveSummary(code: String, snapshot: BackupSnapshot, deviceId: String) {
+        val match = snapshot.matches.firstOrNull() ?: return
+        val inns = snapshot.innings.filter { it.matchId == match.matchId }.sortedBy { it.inningsNumber }
+        val current = inns.lastOrNull { !it.isCompleted } ?: inns.lastOrNull()
+        val recent = current?.let { cur ->
+            snapshot.ballEvents.filter { it.inningsId == cur.inningsId }
+                .sortedBy { it.ballId }.takeLast(8).map { ballLabel(it) }
+        } ?: emptyList()
+        val data = mapOf(
+            "teamA" to match.teamAName,
+            "teamB" to match.teamBName,
+            "totalOvers" to match.totalOvers,
+            "isCompleted" to match.isCompleted,
+            "result" to match.resultSummary,
+            "innings" to inns.map {
+                mapOf(
+                    "number" to it.inningsNumber,
+                    "team" to it.battingTeam,
+                    "runs" to it.totalRuns,
+                    "wickets" to it.wickets,
+                    "overs" to "${it.completedOvers}.${it.ballsThisOver}",
+                    "superOver" to it.isSuperOver
+                )
+            },
+            "striker" to (current?.strikerName ?: ""),
+            "nonStriker" to (current?.nonStrikerName ?: ""),
+            "bowler" to (current?.currentBowlerName ?: ""),
+            "target" to current?.target,
+            "recentBalls" to recent,
+            FIELD_UPDATED_AT to FieldValue.serverTimestamp(),
+            FIELD_UPDATED_BY to deviceId
+        )
+        FirebaseFirestore.getInstance().collection(LIVE_COLLECTION).document(code).set(data).await()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun DocumentSnapshot.toLiveSummary(): LiveMatchSummary? {
+        val a = getString("teamA") ?: return null
+        val b = getString("teamB") ?: return null
+        val innings = (get("innings") as? List<Map<String, Any?>>).orEmpty().map {
+            LiveInnings(
+                number = (it["number"] as? Number)?.toInt() ?: 1,
+                team = it["team"] as? String ?: "",
+                runs = (it["runs"] as? Number)?.toInt() ?: 0,
+                wickets = (it["wickets"] as? Number)?.toInt() ?: 0,
+                overs = it["overs"] as? String ?: "0.0",
+                isSuperOver = it["superOver"] as? Boolean ?: false
+            )
+        }
+        return LiveMatchSummary(
+            code = id,
+            teamA = a,
+            teamB = b,
+            totalOvers = getLong("totalOvers")?.toInt() ?: 0,
+            isCompleted = getBoolean("isCompleted") ?: false,
+            result = getString("result"),
+            innings = innings,
+            striker = getString("striker").orEmpty(),
+            nonStriker = getString("nonStriker").orEmpty(),
+            bowler = getString("bowler").orEmpty(),
+            target = getLong("target")?.toInt(),
+            recentBalls = (get("recentBalls") as? List<String>).orEmpty(),
+            updatedAtMs = getTimestamp(FIELD_UPDATED_AT)?.toDate()?.time ?: System.currentTimeMillis()
+        )
+    }
+
+    /**
+     * Streams every match currently being played (any phone, any room), newest first. Listens
+     * to the whole small summary collection and filters client-side, so no Firestore index is
+     * needed. Completed or stale (> [LIVE_WINDOW_MS]) matches are dropped.
+     */
+    fun listenLiveMatches(
+        onUpdate: (List<LiveMatchSummary>) -> Unit,
+        onError: (String) -> Unit
+    ): ListenerRegistration {
+        return FirebaseFirestore.getInstance().collection(LIVE_COLLECTION)
+            .addSnapshotListener { snap, error ->
+                if (error != null) { onError(error.message ?: "Couldn't load live matches"); return@addSnapshotListener }
+                if (snap == null) return@addSnapshotListener
+                val cutoff = System.currentTimeMillis() - LIVE_WINDOW_MS
+                onUpdate(
+                    snap.documents.mapNotNull { it.toLiveSummary() }
+                        .filter { !it.isCompleted && it.updatedAtMs >= cutoff }
+                        .sortedByDescending { it.updatedAtMs }
+                )
+            }
     }
 
     /** One-off fetch, used when a device first joins a shared match by code. */
@@ -239,5 +418,6 @@ object CloudSync {
     suspend fun deleteRoom(code: String) {
         runCatching { rooms().document(code).delete().await() }
         runCatching { matches().document(code).delete().await() }
+        runCatching { FirebaseFirestore.getInstance().collection(LIVE_COLLECTION).document(code).delete().await() }
     }
 }

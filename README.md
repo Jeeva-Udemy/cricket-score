@@ -134,6 +134,19 @@ much larger project)
 - Follow-on, DLS/rain rules, and super overs are not implemented.
 
 ## Recent changes
+- **Dashboard** — new Home tile next to Share Data. All-time numbers across every match, drawn
+  as bar graphs: wins/losses per team, head-to-head, most runs and most wickets by team, 4s and 6s
+  per team, per-team records (most 4s, most 6s, highest innings score, highest overall score), and
+  Top-10 lists (overall points, run scorers, wicket takers). Super Overs only decide a tied
+  match's winner; they are not counted in runs, wickets or boundaries. Respects Merge players.
+- **Match History by date** — the page now lists only the dates played (newest first, with the
+  match count); tap a date to expand/collapse that day's matches. The calendar filter still works
+  and opens the chosen day automatically.
+- **Live Match tab** — Home "Tournaments" is now **Live Match**. It lists every match being
+  scored right now on any phone with the app (teams, score, overs, target, batters, bowler,
+  this-over balls), updating in real time. Matches appear while scored inside a Room (that is
+  what syncs to the cloud); they disappear when completed or after 12 h without updates.
+  Data lives in Firestore `live_scores/{roomCode}` (summary only) — **redeploy `firestore.rules`**.
 - **Run-out fix** — the Wicket dialog now asks *which batsman* is run out (by name, nothing
   pre-selected), the runs completed, and which end the new batsman comes in at, with a
   "Next ball: X on strike" preview. The scorecard now marks the batsman who was actually

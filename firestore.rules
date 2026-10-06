@@ -25,6 +25,11 @@ service cloud.firestore {
     match /team_squads/{publisher} {
       allow read, write: if true;
     }
+    // Live Match tab: tiny score summaries of matches being played right now. Any installed
+    // phone may read the list; phones write their own room's summary (same no-login model).
+    match /live_scores/{roomCode} {
+      allow read, write: if true;
+    }
     // App updates: phones may only ADD their email to the tester queue (never read the list);
     // the CI build (service account, bypasses rules) reads it and writes app_release.
     match /tester_requests/{email} {

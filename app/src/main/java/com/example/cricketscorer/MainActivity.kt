@@ -18,11 +18,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.cricketscorer.ui.ComingSoonScreen
 import com.example.cricketscorer.ui.HomeScreen
+import com.example.cricketscorer.ui.LiveMatchDetailScreen
+import com.example.cricketscorer.ui.LiveMatchesScreen
 import com.example.cricketscorer.ui.MatchDashboardScreen
 import com.example.cricketscorer.ui.MatchHistoryScreen
 import com.example.cricketscorer.ui.MatchSetupScreen
+import com.example.cricketscorer.ui.OverallDashboardScreen
 import com.example.cricketscorer.ui.PlayerStatsScreen
 import com.example.cricketscorer.ui.RankingsScreen
 import com.example.cricketscorer.ui.RoomDetailScreen
@@ -31,8 +33,10 @@ import com.example.cricketscorer.ui.ScoringScreen
 import com.example.cricketscorer.ui.ShareDataScreen
 import com.example.cricketscorer.ui.SquadScreen
 import com.example.cricketscorer.viewmodel.HomeViewModel
+import com.example.cricketscorer.viewmodel.LiveMatchesViewModel
 import com.example.cricketscorer.viewmodel.MatchDashboardViewModel
 import com.example.cricketscorer.viewmodel.MatchSetupViewModel
+import com.example.cricketscorer.viewmodel.OverallDashboardViewModel
 import com.example.cricketscorer.viewmodel.PlayerStatsViewModel
 import com.example.cricketscorer.viewmodel.RoomsViewModel
 import com.example.cricketscorer.viewmodel.ScoringViewModel
@@ -109,12 +113,13 @@ fun CricketNavHost(
                 onManageSquads = { navController.navigate("squads") },
                 onPlayerStats = { navController.navigate("playerStats") },
                 onRankings = { navController.navigate("rankings") },
-                onTournaments = { navController.navigate("tournaments") },
+                onLiveMatches = { navController.navigate("liveMatches") },
                 onMatchHistory = { navController.navigate("matchHistory") },
                 onOpenRooms = { navController.navigate("rooms") },
                 externalImportUri = pendingImportUri,
                 onExternalImportConsumed = onImportConsumed,
-                onOpenShareData = { navController.navigate("share") }
+                onOpenShareData = { navController.navigate("share") },
+                onOpenDashboard = { navController.navigate("overallDashboard") }
             )
         }
 
@@ -194,8 +199,28 @@ fun CricketNavHost(
             )
         }
 
-        composable("tournaments") {
-            ComingSoonScreen(title = "Tournaments", onNavigateBack = { navController.popBackStack() })
+        composable("overallDashboard") {
+            val overallViewModel: OverallDashboardViewModel = viewModel(factory = factory)
+            OverallDashboardScreen(viewModel = overallViewModel, onNavigateBack = { navController.popBackStack() })
+        }
+
+        composable("liveMatches") {
+            val liveViewModel: LiveMatchesViewModel = viewModel(factory = factory)
+            LiveMatchesScreen(
+                viewModel = liveViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenMatch = { code -> navController.navigate("liveMatch/$code") }
+            )
+        }
+
+        composable(
+            route = "liveMatch/{code}",
+            arguments = listOf(navArgument("code") { type = NavType.StringType })
+        ) { backStackEntry ->
+            LiveMatchDetailScreen(
+                code = backStackEntry.arguments?.getString("code").orEmpty(),
+                onNavigateBack = { navController.popBackStack() }
+            )
         }
 
         composable("squads") {
