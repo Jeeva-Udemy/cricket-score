@@ -8,6 +8,15 @@ import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.RecentPlayersStore
 import com.example.cricketscorer.data.TeamRole
 import com.example.cricketscorer.data.UserProfileStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Team Sharing sync logic, shared by Home (automatic, on app open) and the Share Data page
@@ -73,7 +82,9 @@ class TeamSyncManager(
     }
 
     /** Uploads every local match whose content changed since this phone last uploaded it. */
-    suspend fun publishChanged(): Int {
+    suspend fun publishChanged(): Int = publishLock.withLock { publishChangedLocked() }
+
+    private suspend fun publishChangedLocked(): Int {
         val publisher = publisherId()
         val all = repository.getFullBackupSnapshot(BackupDataScope.BOTH)
         val done = UserProfileStore.publishedFingerprints(context).toMutableMap()
@@ -95,8 +106,7 @@ class TeamSyncManager(
             val balls = innings.sumOf { ballCountByInnings[it.inningsId] ?: 0 }
             if (balls == 0) continue // nothing scored yet — not worth sharing
             val key = TeamHub.matchKey(match.createdAt, match.teamAName, match.teamBName)
-            val fp = "${match.isCompleted}|${match.resultSummary}|${match.currentInningsNumber}|$balls|" +
-                innings.joinToString(",") { "${it.inningsNumber}:${it.totalRuns}/${it.wickets}/${it.completedOvers}.${it.ballsThisOver}" }
+            val fp = matchFingerprint(match, innings, balls)
             if (done[key] == fp) continue
             val snapshot = repository.getSnapshotForMatch(match.matchId).copy(playerMerges = all.playerMerges)
             TeamHub.publishMatch(key, snapshot, publisher)
@@ -107,8 +117,70 @@ class TeamSyncManager(
         return count
     }
 
+    private fun matchFingerprint(
+        match: com.example.cricketscorer.data.MatchEntity,
+        innings: List<com.example.cricketscorer.data.InningsEntity>,
+        balls: Int
+    ): String =
+        "${match.isCompleted}|${match.resultSummary}|${match.currentInningsNumber}|$balls|" +
+            innings.joinToString(",") { "${it.inningsNumber}:${it.totalRuns}/${it.wickets}/${it.completedOvers}.${it.ballsThisOver}" }
+
+    /**
+     * Publishes ONE match to the team page right now (if it changed since the last upload).
+     * Called (debounced) by the scoring screen so the web History page and other phones see
+     * the 2nd innings and the final result as soon as scoring happens, instead of only when
+     * someone happens to reopen Home. Only Admin / Manager phones publish. Never throws.
+     */
+    suspend fun publishMatchNow(matchId: Long) {
+        runCatching {
+            val canPublish = UserProfileStore.isAdminSession(context) ||
+                UserProfileStore.cachedRole(context)?.canPublish == true
+            if (!canPublish) return
+            publishLock.withLock {
+                val snapshot = repository.getSnapshotForMatch(matchId)
+                val match = snapshot.matches.firstOrNull() ?: return
+                val innings = snapshot.innings.sortedBy { it.inningsNumber }
+                val balls = snapshot.ballEvents.size
+                if (balls == 0) return
+                val key = TeamHub.matchKey(match.createdAt, match.teamAName, match.teamBName)
+                val fp = matchFingerprint(match, innings, balls)
+                val done = UserProfileStore.publishedFingerprints(context).toMutableMap()
+                if (done[key] == fp) return
+                TeamHub.publishMatch(
+                    key,
+                    snapshot.copy(playerMerges = repository.getPlayerMerges()),
+                    publisherId()
+                )
+                done[key] = fp
+                UserProfileStore.setPublishedFingerprints(context, done)
+            }
+        }
+    }
+
     private fun fingerprintSquads(s: BackupSnapshot): String =
         (s.squads.map { "${it.squadId}:${it.teamName}" }.sorted() +
             s.players.map { "${it.squadId}:${it.name}" }.sorted() +
             s.playerMerges.map { "${it.fromName}>${it.toName}" }.sorted()).hashCode().toString()
+
+    companion object {
+        /** One upload at a time, so the fingerprint map is never overwritten by a racing job. */
+        private val publishLock = Mutex()
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val pending = ConcurrentHashMap<Long, Job>()
+
+        /**
+         * Debounced "publish this match soon". Runs on an app-level scope (not the scoring
+         * ViewModel's), so leaving the scoring screen right after the last ball does not cancel
+         * the upload of the final result.
+         */
+        fun schedulePublish(manager: TeamSyncManager, matchId: Long, delayMs: Long = 3_000L) {
+            pending.remove(matchId)?.cancel()
+            val job = scope.launch {
+                delay(delayMs)
+                manager.publishMatchNow(matchId)
+            }
+            pending[matchId] = job
+            job.invokeOnCompletion { pending.remove(matchId, job) }
+        }
+    }
 }

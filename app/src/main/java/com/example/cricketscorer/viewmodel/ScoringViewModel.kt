@@ -18,6 +18,7 @@ import com.example.cricketscorer.model.WicketType
 import com.example.cricketscorer.stats.CreasePositions
 import com.example.cricketscorer.stats.ScorecardCalculator
 import com.example.cricketscorer.sync.CloudSync
+import com.example.cricketscorer.sync.TeamSyncManager
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -365,6 +366,7 @@ class ScoringViewModel(
 ) : ViewModel() {
 
     private var matchId: Long = -1
+    private val teamSync by lazy { TeamSyncManager(repository, appContext) }
     private var observeJob: Job? = null
     // Track which innings IDs we're already observing to avoid duplicate observers
     private val observedInningsIds = mutableSetOf<Long>()
@@ -498,6 +500,9 @@ class ScoringViewModel(
      *  collapse genuinely-rapid double-taps, so the other device sees each ball/undo pushed
      *  out almost immediately instead of visibly lagging behind. */
     private fun scheduleCloudPush() {
+        // Team page / web History: keep the match's published copy current (debounced, and
+        // run on an app-level scope so it survives leaving this screen).
+        if (matchId > 0) TeamSyncManager.schedulePublish(teamSync, matchId)
         val shareCode = _uiState.value.match?.shareCode
         if (shareCode == null) {
             // Local (room-less) match: nothing to mirror between phones, but still show it on
