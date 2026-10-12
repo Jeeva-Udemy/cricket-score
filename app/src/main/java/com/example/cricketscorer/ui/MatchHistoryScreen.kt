@@ -86,7 +86,10 @@ fun MatchHistoryScreen(
     val coroutineScope = rememberCoroutineScope()
     val selectedMatchIds by viewModel.selectedMatchIds.collectAsState()
     val isSelectionMode = selectedMatchIds.isNotEmpty()
+    val isAdmin by viewModel.isAdmin.collectAsState()
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    // Single match awaiting delete confirmation (Admin's per-match delete button).
+    var matchToDelete by remember { mutableStateOf<MatchEntity?>(null) }
 
     // req #3: "show the matches based on the date we played. Keep an Icon like we have in Home
     // page with the date if we select that it should show the list of matches played on that
@@ -146,12 +149,14 @@ fun MatchHistoryScreen(
                     }) {
                         Icon(imageVector = Icons.Default.Share, contentDescription = "Share selected matches")
                     }
-                    IconButton(onClick = { showDeleteConfirmDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete Selected",
-                            tint = MaterialTheme.colorScheme.error
-                        )
+                    if (isAdmin) {
+                        IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete Selected",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -248,6 +253,8 @@ fun MatchHistoryScreen(
                                     match = match,
                                     isSelected = isSelected,
                                     isSelectionMode = isSelectionMode,
+                                    isAdmin = isAdmin,
+                                    onDelete = { matchToDelete = match },
                                     onFetchPlayerOfTheMatch = { viewModel.playerOfTheMatch(match) },
                                     onOpenDashboard = { onOpenDashboard(match.matchId) },
                                     onClick = {
@@ -270,6 +277,26 @@ fun MatchHistoryScreen(
                 }
             }
         }
+    }
+
+    matchToDelete?.let { match ->
+        AlertDialog(
+            onDismissRequest = { matchToDelete = null },
+            title = { Text("Delete match?") },
+            text = {
+                Text("Delete ${match.teamAName} vs ${match.teamBName}? It will also be removed from the team dashboard. This action cannot be undone.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteMatch(match.matchId)
+                        matchToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { matchToDelete = null }) { Text("Cancel") } }
+        )
     }
 
     if (showDeleteConfirmDialog) {
@@ -365,6 +392,8 @@ private fun MatchHistoryCard(
     match: MatchEntity,
     isSelected: Boolean,
     isSelectionMode: Boolean,
+    isAdmin: Boolean,
+    onDelete: () -> Unit,
     onFetchPlayerOfTheMatch: suspend () -> PlayerStatsCalculator.PlayerAward?,
     onOpenDashboard: () -> Unit,
     onClick: () -> Unit,
@@ -481,10 +510,26 @@ private fun MatchHistoryCard(
                 }
 
                 if (!isSelectionMode) {
-                    // Match Dashboard: whole-match summary image to share on WhatsApp.
-                    TextButton(onClick = onOpenDashboard, contentPadding = PaddingValues(0.dp)) {
-                        Icon(Icons.Default.Dashboard, contentDescription = null)
-                        Text("  Match summary / share")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Match Dashboard: whole-match summary image to share on WhatsApp.
+                        TextButton(onClick = onOpenDashboard, contentPadding = PaddingValues(0.dp)) {
+                            Icon(Icons.Default.Dashboard, contentDescription = null)
+                            Text("  Match summary / share")
+                        }
+                        // Admin only: remove matches created while testing.
+                        if (isAdmin) {
+                            TextButton(
+                                onClick = onDelete,
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null)
+                                Text("  Delete")
+                            }
+                        }
                     }
                 }
             }

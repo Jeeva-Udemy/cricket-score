@@ -16,6 +16,7 @@ import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.example.cricketscorer.backup.ShareUtils
 import com.example.cricketscorer.data.RecentPlayersStore
+import com.example.cricketscorer.data.TeamRole
 import com.example.cricketscorer.data.UserProfileStore
 import com.example.cricketscorer.sync.TeamHub
 import com.example.cricketscorer.sync.TeamSyncManager
@@ -95,6 +96,22 @@ class HomeViewModel(
     val isSelectionMode: Boolean
         get() = _selectedMatchIds.value.isNotEmpty()
 
+    // Only Admins (root login, or a number the team made Admin) may delete matches — used to
+    // clear out matches created while testing. Starts from the cached role so it works offline,
+    // then refreshes from the team list. Declared before init{} on purpose (see class doc).
+    private val _isAdmin = MutableStateFlow(
+        UserProfileStore.isAdminSession(appContext) ||
+            UserProfileStore.cachedRole(appContext) == TeamRole.ADMIN
+    )
+    val isAdmin: StateFlow<Boolean> = _isAdmin.asStateFlow()
+
+    fun refreshAdminRole() {
+        viewModelScope.launch {
+            val role = runCatching { TeamSyncManager(repository, appContext).effectiveRole() }.getOrNull()
+            _isAdmin.value = UserProfileStore.isAdminSession(appContext) || role == TeamRole.ADMIN
+        }
+    }
+
     private val driveBackupManager by lazy { DriveBackupManager(appContext) }
     private var pendingAction: PendingBackupAction? = null
 
@@ -129,6 +146,7 @@ class HomeViewModel(
 
     init {
         observeMatches()
+        refreshAdminRole()
     }
 
     // ---------- First launch: name / mobile / email ----------
@@ -288,9 +306,18 @@ class HomeViewModel(
         _selectedMatchIds.value = emptySet()
     }
 
-    fun deleteSelectedMatches() {
-        val idsToDelete = _selectedMatchIds.value.toList()
-        if (idsToDelete.isEmpty()) return
+    fun deleteSelectedMatches() = deleteMatchesAsAdmin(_selectedMatchIds.value.toList())
+
+    /** Admin only: delete a single match (Match History card's delete button). */
+    fun deleteMatch(matchId: Long) = deleteMatchesAsAdmin(listOf(matchId))
+
+    private fun deleteMatchesAsAdmin(idsToDelete: List<Long>) {
+        if (!_isAdmin.value || idsToDelete.isEmpty()) return
+
+        // Work out the team-cloud keys BEFORE the rows disappear.
+        val keys = _matches.value
+            .filter { it.matchId in idsToDelete }
+            .map { TeamHub.matchKey(it.createdAt, it.teamAName, it.teamBName) }
 
         viewModelScope.launch {
             repository.deleteMatches(idsToDelete)
@@ -301,7 +328,14 @@ class HomeViewModel(
                     com.example.cricketscorer.sync.CloudSync.localLiveCode(devId, id)
                 )
             }
-            _selectedMatchIds.value = emptySet()
+            // Remove the published copy too, otherwise the match stays on the Wickt web
+            // dashboard and comes back on other phones' next sync.
+            runCatching { keys.forEach { TeamHub.deleteMatch(it) } }
+            UserProfileStore.setPublishedFingerprints(
+                appContext,
+                UserProfileStore.publishedFingerprints(appContext) - keys.toSet()
+            )
+            _selectedMatchIds.value = _selectedMatchIds.value - idsToDelete.toSet()
         }
     }
 

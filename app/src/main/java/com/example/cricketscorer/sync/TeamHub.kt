@@ -95,6 +95,12 @@ object TeamHub {
         ).await()
     }
 
+    /** Admin clean-up (e.g. test matches): removes a published match so it no longer shows on
+     *  the web dashboard and is never pulled down by other phones. */
+    suspend fun deleteMatch(key: String) {
+        matches().document(key).delete().await()
+    }
+
     suspend fun publishSquads(snapshot: BackupSnapshot, publisher: String) {
         squads().document(publisher).set(
             mapOf(
