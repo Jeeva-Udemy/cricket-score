@@ -6,6 +6,7 @@ import com.example.cricketscorer.data.BackupSnapshot
 import com.example.cricketscorer.data.CloudDeviceIdStore
 import com.example.cricketscorer.data.CricketRepository
 import com.example.cricketscorer.data.RecentPlayersStore
+import com.example.cricketscorer.data.RoomStore
 import com.example.cricketscorer.data.TeamRole
 import com.example.cricketscorer.data.UserProfileStore
 import kotlinx.coroutines.CoroutineScope
@@ -133,12 +134,20 @@ class TeamSyncManager(
      */
     suspend fun publishMatchNow(matchId: Long) {
         runCatching {
-            val canPublish = UserProfileStore.isAdminSession(context) ||
+            val roleCanPublish = UserProfileStore.isAdminSession(context) ||
                 UserProfileStore.cachedRole(context)?.canPublish == true
-            if (!canPublish) return
             publishLock.withLock {
                 val snapshot = repository.getSnapshotForMatch(matchId)
                 val match = snapshot.matches.firstOrNull() ?: return
+                // 2nd-innings fix (web History / Dashboard): in a Room the 2nd innings is scored
+                // on the OTHER phone (the batting side's), which is often a plain "User" phone
+                // that never published — so team_matches kept the 1st-innings-only copy, and
+                // once the room moved on to its next match (overwriting liveMatches/{room}) the
+                // web page fell back to that stale copy. A phone that is itself a member of
+                // the match's room may now publish that room match too.
+                val inThisRoom = match.shareCode != null &&
+                    RoomStore.getActiveRoom(context)?.roomCode == match.shareCode
+                if (!roleCanPublish && !inThisRoom) return
                 val innings = snapshot.innings.sortedBy { it.inningsNumber }
                 val balls = snapshot.ballEvents.size
                 if (balls == 0) return

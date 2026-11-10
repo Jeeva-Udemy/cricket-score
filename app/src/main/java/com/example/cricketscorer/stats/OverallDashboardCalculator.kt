@@ -48,6 +48,20 @@ object OverallDashboardCalculator {
 
     data class TopPlayer(val name: String, val team: String, val value: Int)
 
+    /** One batter's innings — "Best Batting Figure" is the single best of these. */
+    data class WinningBatting(
+        val name: String, val team: String, val runs: Int, val balls: Int, val notOut: Boolean,
+        val against: String, val playedAt: Long, val result: String
+    )
+
+    /** One bowler's spell — "Best Bowling Figure" is the single best of these. */
+    data class WinningBowling(
+        val name: String, val team: String, val wickets: Int, val runs: Int, val legalBalls: Int,
+        val against: String, val playedAt: Long, val result: String
+    ) {
+        val overs: String get() = "${legalBalls / 6}.${legalBalls % 6}"
+    }
+
     data class DashboardData(
         val totalMatches: Int,
         val completedMatches: Int,
@@ -55,7 +69,9 @@ object OverallDashboardCalculator {
         val headToHead: List<HeadToHead>,
         val topOverall: List<TopPlayer>,
         val topBatters: List<TopPlayer>,
-        val topBowlers: List<TopPlayer>
+        val topBowlers: List<TopPlayer>,
+        val bestBattingInWin: List<WinningBatting> = emptyList(),
+        val bestBowlingInWin: List<WinningBowling> = emptyList()
     ) {
         companion object { val EMPTY = DashboardData(0, 0, emptyList(), emptyList(), emptyList(), emptyList(), emptyList()) }
     }
@@ -88,6 +104,8 @@ object OverallDashboardCalculator {
             return teams.getOrPut(PlayerIdentity.keyPart(clean)) { TeamAcc(PlayerIdentity.keyPart(clean)) }.also { it.see(clean) }
         }
         val h2h = mutableMapOf<Pair<String, String>, IntArray>() // [played, winsFirst, winsSecond, ties]
+        val winBat = mutableListOf<WinningBatting>()
+        val winBowl = mutableListOf<WinningBowling>()
 
         for (m in matches) {
             val a = team(m.teamAName)
@@ -95,7 +113,10 @@ object OverallDashboardCalculator {
             val matchInnings = inningsByMatch[m.matchId].orEmpty().sortedBy { it.inningsNumber }
 
             // ---- Results (completed matches only) ----
-            if (m.isCompleted) {
+            // A match ended during its 1st innings ("Complete Match" — see MatchCompletion) is a
+            // no result: it isn't a win, loss or tie for either side.
+            val decided = matchInnings.count { !it.isSuperOver } >= 2
+            if (m.isCompleted && decided) {
                 a.played++; b.played++
                 val winnerKey = winnerKey(matchInnings)
                 val pairKey = if (a.key <= b.key) a.key to b.key else b.key to a.key
@@ -107,6 +128,9 @@ object OverallDashboardCalculator {
                     else -> { a.ties++; b.ties++; rec[3]++ }
                 }
             }
+
+            // Best Batting / Bowling Figure: every innings by either team counts.
+            collectFigures(m, matchInnings, ballsByInnings, resolver, winBat, winBowl)
 
             // ---- Totals, boundaries, individual scores (regular innings only) ----
             for (inn in matchInnings.filter { !it.isSuperOver }) {
@@ -175,8 +199,64 @@ object OverallDashboardCalculator {
             // Same points system as Player of the Match: 1/run, +1 per four, +2 per six, 20/wicket.
             topOverall = topPlayers { it.batting.runs + it.batting.fours + it.batting.sixes * 2 + it.bowling.wickets * 20 },
             topBatters = topPlayers { it.batting.runs },
-            topBowlers = topPlayers { it.bowling.wickets }
+            topBowlers = topPlayers { it.bowling.wickets },
+            bestBattingInWin = winBat
+                .sortedWith(compareByDescending<WinningBatting> { it.runs }.thenBy { it.balls }.thenByDescending { it.notOut })
+                .take(1),
+            bestBowlingInWin = winBowl
+                .sortedWith(compareByDescending<WinningBowling> { it.wickets }.thenBy { it.runs }.thenBy { it.legalBalls })
+                .take(1)
         )
+    }
+
+    /**
+     * Best Batting / Bowling Figure: every batter (with runs) and every bowler (with wickets)
+     * of BOTH teams in this match, regular innings only — the dashboard keeps the single best.
+     * Same rules as the scorecard — batter runs on NONE / NO_BALL, balls faced exclude wides;
+     * bowler charged bat runs + wides + no-balls (not byes / leg-byes), run-outs don't count.
+     */
+    private fun collectFigures(
+        m: MatchEntity,
+        inns: List<InningsEntity>,
+        ballsByInnings: Map<Long, List<BallEventEntity>>,
+        resolver: PlayerMergeResolver,
+        bat: MutableList<WinningBatting>,
+        bowl: MutableList<WinningBowling>
+    ) {
+        val result = m.resultSummary.orEmpty()
+        for (inn in inns.filter { !it.isSuperOver }) {
+            val balls = ballsByInnings[inn.inningsId].orEmpty().filter { it.extraType != ExtraType.PENALTY }
+            run {
+                val per = linkedMapOf<String, IntArray>() // [runs, balls, out]
+                balls.forEach { b ->
+                    val e = per.getOrPut(b.strikerName.ifBlank { "Batsman" }) { IntArray(3) }
+                    if (b.extraType != ExtraType.WIDE) e[1]++
+                    if (b.extraType == ExtraType.NONE || b.extraType == ExtraType.NO_BALL) e[0] += b.runsScored
+                    if (b.isWicket) per.getOrPut(ScorecardCalculator.dismissedName(b)) { IntArray(3) }[2] = 1
+                }
+                per.forEach { (name, e) ->
+                    if (e[0] <= 0) return@forEach
+                    val r = resolver.resolve(name, inn.battingTeam)
+                    bat += WinningBatting(r.name, r.team, e[0], e[1], e[2] == 0, inn.bowlingTeam, m.createdAt, result)
+                }
+            }
+            run {
+                val per = linkedMapOf<String, IntArray>() // [wickets, runs, legal balls]
+                balls.filter { it.bowlerName.isNotBlank() }.forEach { b ->
+                    val e = per.getOrPut(b.bowlerName) { IntArray(3) }
+                    if (b.extraType == ExtraType.NONE || b.extraType == ExtraType.WIDE || b.extraType == ExtraType.NO_BALL) {
+                        e[1] += b.runsScored + b.extraRuns
+                    }
+                    if (ScorecardCalculator.isLegal(b)) e[2]++
+                    if (ScorecardCalculator.isBowlerWicket(b)) e[0]++
+                }
+                per.forEach { (name, e) ->
+                    if (e[0] <= 0) return@forEach
+                    val r = resolver.resolve(name, inn.bowlingTeam)
+                    bowl += WinningBowling(r.name, r.team, e[0], e[1], e[2], inn.battingTeam, m.createdAt, result)
+                }
+            }
+        }
     }
 
     /** Winning team key from the innings data (Super Over pair decides a tied match); null = tie / no result. */

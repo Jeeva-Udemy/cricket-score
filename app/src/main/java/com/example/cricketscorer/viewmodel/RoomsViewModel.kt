@@ -11,8 +11,10 @@ import com.example.cricketscorer.data.DeviceMatchRoleStore
 import com.example.cricketscorer.data.InningsEntity
 import com.example.cricketscorer.data.MatchEntity
 import com.example.cricketscorer.data.RoomStore
+import com.example.cricketscorer.stats.MatchCompletion
 import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.example.cricketscorer.sync.CloudSync
+import com.example.cricketscorer.sync.TeamSyncManager
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +68,7 @@ class RoomsViewModel(
 ) : ViewModel() {
 
     private val deviceId = CloudDeviceIdStore.getDeviceId(appContext)
+    private val teamSync by lazy { TeamSyncManager(repository, appContext) }
 
     private val _roomState = MutableStateFlow<RoomUiState>(RoomUiState.NotInRoom)
     val roomState: StateFlow<RoomUiState> = _roomState.asStateFlow()
@@ -234,6 +237,10 @@ class RoomsViewModel(
                 // matching guard).
                 if (!isMatchSnapshotAlreadyApplied(match.matchId, snapshot)) {
                     repository.applyMatchSnapshot(snapshot)
+                    // Keep the team / web copy (team_matches) current even when the update
+                    // came from the other phone and this one isn't on the Scoring screen —
+                    // e.g. the 2nd innings scored on the other device.
+                    TeamSyncManager.schedulePublish(teamSync, match.matchId)
                 }
                 runCatching { CloudSync.fetchRoom(code) }.getOrNull()?.let { info ->
                     val myTeam = if (mySlot == 1) info.slot1Team else info.slot2Team
@@ -331,6 +338,60 @@ class RoomsViewModel(
             }
             _selectedRoomCodes.value = emptySet()
             refreshRoomHistory()
+        }
+    }
+
+    // ---------- Complete Match / Undo (active room match) ----------
+
+    /** Ends an in-progress room match right now (see [MatchCompletion]) so it counts in the
+     *  Dashboard / Player of the Series / web pages, then mirrors it to the other phone. */
+    fun completeRoomMatch(matchId: Long) {
+        viewModelScope.launch {
+            val match = repository.getMatch(matchId) ?: return@launch
+            if (match.isCompleted) return@launch
+            val innings = repository.getInningsForMatch(matchId)
+            val live = innings.firstOrNull { it.inningsNumber == match.currentInningsNumber }
+            val completedMatch = match.copy(
+                isCompleted = true,
+                resultSummary = MatchCompletion.resultText(match, innings)
+            )
+            if (live != null) {
+                repository.finishInningsAtomic(live.copy(isCompleted = true), null, completedMatch)
+            } else {
+                repository.updateMatch(completedMatch)
+            }
+            syncAfterLocalChange(completedMatch)
+        }
+    }
+
+    /** Reverts [completeRoomMatch]: reopens the innings the match was on and the match itself.
+     *  Only for matches completed through "Complete Match" — never a naturally finished one. */
+    fun undoCompleteRoomMatch(matchId: Long) {
+        viewModelScope.launch {
+            val match = repository.getMatch(matchId) ?: return@launch
+            if (!MatchCompletion.isEarlyCompleted(match)) return@launch
+            val live = repository.getInningsForMatch(matchId)
+                .firstOrNull { it.inningsNumber == match.currentInningsNumber }
+            val reopened = match.copy(isCompleted = false, resultSummary = null)
+            if (live != null) {
+                repository.finishInningsAtomic(live.copy(isCompleted = false), null, reopened)
+            } else {
+                repository.updateMatch(reopened)
+            }
+            syncAfterLocalChange(reopened)
+        }
+    }
+
+    /** Pushes a locally-changed room match to the other phone (live mirror) and the team/web
+     *  copy. The live mirror only ever holds the room's LATEST match, so an older match is
+     *  only published to the team copy — pushing it would replace the current live match. */
+    private suspend fun syncAfterLocalChange(match: MatchEntity) {
+        TeamSyncManager.schedulePublish(teamSync, match.matchId, delayMs = 500L)
+        val code = match.shareCode ?: return
+        val latest = repository.getMatchesForRoom(code).maxByOrNull { it.createdAt }
+        if (latest?.matchId != match.matchId) return
+        runCatching {
+            CloudSync.pushSnapshot(code, repository.getSnapshotForMatch(match.matchId), deviceId)
         }
     }
 

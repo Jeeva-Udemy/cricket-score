@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.cricketscorer.data.MatchEntity
+import com.example.cricketscorer.stats.MatchCompletion
 import com.example.cricketscorer.stats.PlayerStatsCalculator
 import com.example.cricketscorer.viewmodel.RoomUiState
 import com.example.cricketscorer.viewmodel.RoomsViewModel
@@ -79,6 +80,8 @@ fun RoomDetailScreen(
     val selectedMatchIds by viewModel.selectedRoomMatchIds.collectAsState()
     val isSelectionMode = selectedMatchIds.isNotEmpty()
     var showDeleteMatchesDialog by remember { mutableStateOf(false) }
+    // "Complete Match" confirmation for the room's in-progress match (Undo is offered after).
+    var completeTarget by remember { mutableStateOf<MatchEntity?>(null) }
 
     // req: "If we are playing multiple matches in a single room then we need to show who's the
     // Player of the series" — only meaningful once 2+ matches in this room have finished.
@@ -244,7 +247,11 @@ fun RoomDetailScreen(
                             }
                         },
                         onLongClick = { viewModel.toggleRoomMatchSelection(match.matchId) },
-                        onCheckedChange = { viewModel.toggleRoomMatchSelection(match.matchId) }
+                        onCheckedChange = { viewModel.toggleRoomMatchSelection(match.matchId) },
+                        showComplete = isActive && !isSelectionMode && !match.isCompleted,
+                        showUndoComplete = isActive && !isSelectionMode && MatchCompletion.isEarlyCompleted(match),
+                        onComplete = { completeTarget = match },
+                        onUndoComplete = { viewModel.undoCompleteRoomMatch(match.matchId) }
                     )
                 }
             }
@@ -269,6 +276,29 @@ fun RoomDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showExitDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    completeTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { completeTarget = null },
+            title = { Text("Complete this match?") },
+            text = {
+                Text(
+                    "${target.teamAName} vs ${target.teamBName} will be ended now with the score as it " +
+                        "stands, and its result will count in the Dashboard, Player of the Match / " +
+                        "Series and the web page. You can Undo this afterwards."
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.completeRoomMatch(target.matchId)
+                    completeTarget = null
+                }) { Text("Complete Match") }
+            },
+            dismissButton = {
+                TextButton(onClick = { completeTarget = null }) { Text("Cancel") }
             }
         )
     }
@@ -355,7 +385,11 @@ private fun RoomMatchCard(
     onFetchPlayerOfTheMatch: suspend () -> PlayerStatsCalculator.PlayerAward?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    showComplete: Boolean = false,
+    showUndoComplete: Boolean = false,
+    onComplete: () -> Unit = {},
+    onUndoComplete: () -> Unit = {}
 ) {
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
 
@@ -427,6 +461,16 @@ private fun RoomMatchCard(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
                     )
+                }
+                if (showComplete) {
+                    OutlinedButton(onClick = onComplete, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Text("Complete Match")
+                    }
+                }
+                if (showUndoComplete) {
+                    OutlinedButton(onClick = onUndoComplete, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Text("Undo Complete Match")
+                    }
                 }
             }
         }

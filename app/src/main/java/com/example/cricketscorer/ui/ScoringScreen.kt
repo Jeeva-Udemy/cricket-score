@@ -864,7 +864,14 @@ private fun ExtraRunsDialog(
         title = { Text(title) },
         text = {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                items(listOf(0, 1, 2, 3, 4, 5, 6, 7)) { r ->
+                // Byes / leg-byes have no automatic extra run, so "0 byes" isn't a thing —
+                // start those at 1 (4 = the ball ran away to the boundary).
+                val choices = if (extraType == ExtraType.BYE || extraType == ExtraType.LEG_BYE) {
+                    listOf(1, 2, 3, 4, 5, 6, 7)
+                } else {
+                    listOf(0, 1, 2, 3, 4, 5, 6, 7)
+                }
+                items(choices) { r ->
                     OutlinedButton(onClick = { onConfirm(r) }) { Text(r.toString()) }
                 }
             }

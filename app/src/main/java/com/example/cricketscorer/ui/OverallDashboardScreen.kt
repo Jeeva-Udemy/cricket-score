@@ -3,6 +3,9 @@ package com.example.cricketscorer.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +25,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,7 +46,6 @@ import com.example.cricketscorer.stats.OverallDashboardCalculator.TopPlayer
 import com.example.cricketscorer.viewmodel.OverallDashboardViewModel
 
 private val WinColor = Color(0xFF2E7D32)
-private val LossColor = Color(0xFFC62828)
 private val TieColor = Color(0xFF9E9E9E)
 private val RunsColor = Color(0xFF1565C0)
 private val WicketColor = Color(0xFF6A1B9A)
@@ -58,10 +61,21 @@ private val PointsColor = Color(0xFFF9A825)
 fun OverallDashboardScreen(viewModel: OverallDashboardViewModel, onNavigateBack: () -> Unit) {
     val data by viewModel.data.collectAsState()
     val loading by viewModel.loading.collectAsState()
+    val days by viewModel.days.collectAsState()
+    val selectedDay by viewModel.selectedDay.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("Dashboard") },
+            title = {
+                Column {
+                    Text("Dashboard")
+                    Text(
+                        days.firstOrNull { it.key == selectedDay }?.label ?: "All matches",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
             navigationIcon = {
                 IconButton(onClick = onNavigateBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -73,7 +87,40 @@ fun OverallDashboardScreen(viewModel: OverallDashboardViewModel, onNavigateBack:
             data.totalMatches == 0 -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                 Text("Play a match to see the dashboard.", style = MaterialTheme.typography.bodyMedium)
             }
-            else -> DashboardContent(data)
+            else -> {
+                // Per-day dashboard: "All matches" (overall) or just one day's matches.
+                if (days.isNotEmpty()) DaySelector(days, selectedDay, viewModel::selectDay)
+                DashboardContent(data)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DaySelector(
+    days: List<OverallDashboardViewModel.DayOption>,
+    selected: String?,
+    onSelect: (String?) -> Unit
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        item {
+            FilterChip(
+                selected = selected == null,
+                onClick = { onSelect(null) },
+                label = { Text("All matches") }
+            )
+        }
+        items(days, key = { it.key }) { d ->
+            FilterChip(
+                selected = selected == d.key,
+                onClick = { onSelect(d.key) },
+                label = { Text("${d.label} (${d.matches})") }
+            )
         }
     }
 }
@@ -90,15 +137,38 @@ private fun DashboardContent(data: DashboardData) {
             StatTile("Teams", data.teams.size.toString(), Modifier.weight(1f))
         }
 
-        // ---- Wins & losses ----
-        SectionCard("Wins & Losses") {
-            Legend(listOf("Won" to WinColor, "Lost" to LossColor, "Tied" to TieColor))
-            data.teams.filter { it.played > 0 }.forEach { t ->
-                Text("${t.team}  (${t.played} played)", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                SplitBar(listOf(t.wins to WinColor, t.losses to LossColor, t.ties to TieColor))
-                Text("W ${t.wins}  •  L ${t.losses}  •  T ${t.ties}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // ---- Wins (losses aren't shown separately — they're just the other side's wins) ----
+        SectionCard("Wins") {
+            val played = data.teams.filter { it.played > 0 }.sortedByDescending { it.wins }
+            played.firstOrNull()?.takeIf { it.wins > 0 }?.let { Highlight("${it.team} — ${it.wins} win(s)") }
+            BarChart(played.map { "${it.team}  (${it.played} played)" to it.wins }, WinColor)
+            if (played.isEmpty()) Hint("No completed matches yet.")
+        }
+
+        // ---- Best individual figures (either team; all matches or the selected day) ----
+        SectionCard("Best Batting Figure") {
+            Hint("Highest innings by any player")
+            if (data.bestBattingInWin.isEmpty()) Hint("No innings yet.")
+            data.bestBattingInWin.forEach { h ->
+                FigureRow(
+                    figure = "${h.runs}${if (h.notOut) "*" else ""} (${h.balls})",
+                    who = "${h.name} (${h.team})",
+                    detail = "vs ${h.against} • ${figureDate(h.playedAt)}",
+                    color = BatColor
+                )
             }
-            if (data.teams.none { it.played > 0 }) Hint("No completed matches yet.")
+        }
+        SectionCard("Best Bowling Figure") {
+            Hint("Best spell by any player")
+            if (data.bestBowlingInWin.isEmpty()) Hint("No wickets yet.")
+            data.bestBowlingInWin.forEach { h ->
+                FigureRow(
+                    figure = "${h.wickets}/${h.runs} (${h.overs} ov)",
+                    who = "${h.name} (${h.team})",
+                    detail = "vs ${h.against} • ${figureDate(h.playedAt)}",
+                    color = BowlColor
+                )
+            }
         }
 
         // ---- Head to head ----
@@ -148,6 +218,20 @@ private fun DashboardContent(data: DashboardData) {
         }
         SectionCard("Top 10 Run Scorers") { PlayerBarChart(data.topBatters, BatColor, "runs") }
         SectionCard("Top 10 Wicket Takers") { PlayerBarChart(data.topBowlers, BowlColor, "wkts") }
+    }
+}
+
+private fun figureDate(ms: Long): String =
+    java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(ms))
+
+@Composable
+private fun FigureRow(figure: String, who: String, detail: String, color: Color) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(who, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(figure, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = color)
     }
 }
 

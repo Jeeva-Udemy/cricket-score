@@ -145,9 +145,32 @@ data class ScoringUiState(
         get() {
             val inn = currentInnings ?: return false
             if (inn.completedOvers <= 0 || inn.ballsThisOver != 0) return false
-            val lastBowler = selectedInningsBallEvents.maxByOrNull { it.ballId }?.bowlerName
-                ?: return false
+            // Bug fix: a Wide / No-ball as the FIRST ball of a new over leaves ballsThisOver at
+            // 0 (it isn't a legal ball), and that ball was bowled by the NEW bowler — so the old
+            // "current bowler == bowler of the last ball" test wrongly came out true again and
+            // re-opened the mandatory popup. Any delivery already recorded in this over means
+            // the new over's bowler has been chosen.
+            if (newOverStarted) return false
+            val lastBowler = previousOverBowler ?: return false
             return inn.currentBowlerName.isBlank() || inn.currentBowlerName == lastBowler
+        }
+
+    /** True once any delivery (legal or not — wides/no-balls included) has been recorded in
+     *  the over currently in progress. */
+    val newOverStarted: Boolean
+        get() {
+            val inn = currentInnings ?: return false
+            return selectedInningsBallEvents.any { it.overNumber == inn.completedOvers }
+        }
+
+    /** Bowler who bowled the last ball of the previous (completed) over, if any. */
+    val previousOverBowler: String?
+        get() {
+            val inn = currentInnings ?: return null
+            if (inn.completedOvers <= 0) return null
+            return selectedInningsBallEvents
+                .filter { it.overNumber == inn.completedOvers - 1 }
+                .maxByOrNull { it.ballId }?.bowlerName
         }
     val currentInnings: InningsEntity?
         get() {
@@ -214,9 +237,14 @@ data class ScoringUiState(
             // though, they stay in the list — that's what lets a mis-typed bowler name be
             // corrected mid-over via the manual "Change Bowler" button without this rule
             // getting in the way.
-            val justFinishedOwnOver = inn != null && inn.completedOvers > 0 && inn.ballsThisOver == 0
-            if (justFinishedOwnOver && current.isNotBlank()) {
-                set.remove(current)
+            // Only the bowler of the PREVIOUS over is excluded, and only until the new over has
+            // started — a wide/no-ball as the new over's first ball leaves ballsThisOver at 0,
+            // which used to hide the new bowler from their own list.
+            val prev = previousOverBowler
+            val justFinishedOwnOver = inn != null && inn.completedOvers > 0 &&
+                inn.ballsThisOver == 0 && !newOverStarted
+            if (justFinishedOwnOver && prev != null && prev.isNotBlank()) {
+                set.remove(prev)
             }
             return set.toList()
         }
@@ -768,7 +796,11 @@ class ScoringViewModel(
     }
 
     fun recordExtra(extraType: ExtraType, additionalRuns: Int) {
-        applyDelivery(runs = additionalRuns, extraType = extraType, extraRuns = 1, wicketType = WicketType.NONE, isWicket = false)
+        // Laws of Cricket: only a Wide / No-ball carries the automatic 1-run penalty. Byes and
+        // leg-byes are just the runs actually run (or 4 if they reach the boundary) — so "4
+        // byes" is 4, not 1 + 4 = 5 as it used to be.
+        val penalty = if (extraType == ExtraType.WIDE || extraType == ExtraType.NO_BALL) 1 else 0
+        applyDelivery(runs = additionalRuns, extraType = extraType, extraRuns = penalty, wicketType = WicketType.NONE, isWicket = false)
     }
 
     fun recordPenalty(penaltyRuns: Int) {
